@@ -16,11 +16,13 @@ public sealed class DatabaseMigratorTests : IDisposable
         string databasePath = Path.Combine(temporaryDirectory, "state.db");
         var migrator = new DatabaseMigrator(databasePath);
 
-        Assert.Equal(1, migrator.ApplyPending());
-        Assert.Equal(1, migrator.ApplyPending());
+        Assert.Equal(3, migrator.ApplyPending());
+        Assert.Equal(3, migrator.ApplyPending());
 
         string[] expectedTables =
         {
+            "accepted_sync_baseline_entries",
+            "accepted_sync_baselines",
             "peers",
             "playlist_snapshot_entries",
             "playlist_snapshots",

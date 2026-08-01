@@ -69,6 +69,25 @@ approved:
 The current engine computes proposals only. It does not write approved results
 to MusicBee or the phone.
 
+## Transactional synchronization
+
+Phase 3 adds an explicit apply boundary for reviewed proposals:
+
+- Both inputs are re-read and checksum-checked before mutation.
+- MusicBee writes use only canonical indexed URLs and `Playlist_SetFiles`.
+- Phone M3Us are deterministic UTF-8, LF-delimited files with ordered duplicate
+  occurrences preserved.
+- The previous phone file and MusicBee sequence are retained for rollback.
+- Both sides are re-read and verified before an accepted baseline is committed.
+- Failed or cancelled operations restore both sides and do not advance the
+  baseline.
+- SQLite records started, completed, and failed operations plus the latest
+  accepted ordered baseline.
+
+The Windows transport currently operates on a staged playlist directory. The
+existing MTP capture/deployment scripts remain the proven device-transfer
+boundary while native WPD transfer is implemented behind the same interface.
+
 ## License
 
 No license has been selected yet. All rights are reserved until one is added.

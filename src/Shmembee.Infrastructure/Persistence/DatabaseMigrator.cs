@@ -77,6 +77,39 @@ CREATE INDEX ix_track_aliases_track_id ON track_aliases(track_id);
 CREATE INDEX ix_playlists_peer_id ON playlists(peer_id);
 CREATE INDEX ix_playlist_snapshots_playlist_id
     ON playlist_snapshots(playlist_id, revision);
+"),
+            new Migration(
+                2,
+                "transactional synchronization history",
+                @"
+ALTER TABLE sync_operations ADD COLUMN playlist_id TEXT;
+ALTER TABLE sync_operations ADD COLUMN phone_backup_location TEXT;
+ALTER TABLE sync_operations ADD COLUMN expected_musicbee_checksum TEXT;
+ALTER TABLE sync_operations ADD COLUMN expected_phone_checksum TEXT;
+ALTER TABLE sync_operations ADD COLUMN verified_musicbee_checksum TEXT;
+ALTER TABLE sync_operations ADD COLUMN verified_phone_checksum TEXT;
+"),
+            new Migration(
+                3,
+                "accepted synchronization baselines",
+                @"
+CREATE TABLE accepted_sync_baselines (
+    playlist_id TEXT PRIMARY KEY NOT NULL,
+    operation_id TEXT NOT NULL REFERENCES sync_operations(id),
+    accepted_utc TEXT NOT NULL,
+    musicbee_checksum TEXT NOT NULL,
+    phone_checksum TEXT NOT NULL
+);
+
+CREATE TABLE accepted_sync_baseline_entries (
+    playlist_id TEXT NOT NULL REFERENCES accepted_sync_baselines(playlist_id)
+        ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    track_id TEXT NOT NULL,
+    musicbee_url TEXT NOT NULL,
+    phone_path TEXT NOT NULL,
+    PRIMARY KEY(playlist_id, position)
+);
 ")
         };
 
