@@ -1,0 +1,20 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shmembee.Application\Shmembee.Application.csproj" />
+    <ProjectReference Include="..\Shmembee.Infrastructure\Shmembee.Infrastructure.csproj" />
+    <ProjectReference Include="..\Shmembee.Windows\Shmembee.Windows.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <Platforms>x86</Platforms>
+    <AssemblyName>MB_Shmembee</AssemblyName>
+    <RootNamespace>MusicBeePlugin</RootNamespace>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- MusicBee requires the MB_ filename prefix. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>

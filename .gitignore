@@ -1,0 +1,32 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Aa]rtifacts/
+[Tt]est[Rr]esults/
+coverage/
+
+## Visual Studio and user state
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## JetBrains
+.idea/
+*.sln.iml
+
+## NuGet
+*.nupkg
+*.snupkg
+packages/
+
+## Logs and local configuration
+*.log
+*.local
+*.local.*
+
+## OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

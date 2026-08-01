@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <Company>Shmembee</Company>
+    <Authors>shmemcat</Authors>
+    <RepositoryUrl>https://github.com/shmemcat/shmembee</RepositoryUrl>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+  </PropertyGroup>
+</Project>
