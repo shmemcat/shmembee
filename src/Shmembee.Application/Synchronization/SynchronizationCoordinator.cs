@@ -60,17 +60,41 @@ namespace Shmembee.Application.Synchronization
                     plan.PhoneBackingName,
                     plan.OperationId);
                 cancellationToken.ThrowIfCancellationRequested();
+                PlaylistState beforeMusicBeeWrite = musicBee.Read(
+                    plan.MusicBeePlaylistUrl);
+                if (!StateMatches(
+                    beforeMusicBeeWrite,
+                    expectedExists: true,
+                    plan.ExpectedMusicBeeChecksum))
+                {
+                    TryRecordFailure(plan, "MusicBee changed before its write.");
+                    return SynchronizationApplyResult.Stale(
+                        beforeMusicBeeWrite.Checksum,
+                        currentPhone.Checksum);
+                }
+
                 IReadOnlyList<string> proposedMusicBee = plan.Tracks
                     .Select(track => track.MusicBeeUrl)
                     .ToList();
+                musicBeeChanged = true;
                 if (!musicBee.Replace(plan.MusicBeePlaylistUrl, proposedMusicBee))
                 {
                     throw new InvalidOperationException(
                         "MusicBee rejected the proposed playlist.");
                 }
 
-                musicBeeChanged = true;
                 cancellationToken.ThrowIfCancellationRequested();
+                PlaylistState beforePhoneWrite = phone.Read(plan.PhoneBackingName);
+                if (!StateMatches(
+                    beforePhoneWrite,
+                    plan.ExpectedPhoneExists,
+                    plan.ExpectedPhoneChecksum))
+                {
+                    throw new StaleDuringApplyException(
+                        beforeMusicBeeWrite.Checksum,
+                        beforePhoneWrite.Checksum);
+                }
+
                 phoneChanged = true;
                 phone.Replace(
                     plan.PhoneBackingName,
@@ -86,6 +110,7 @@ namespace Shmembee.Application.Synchronization
                     verifiedMusicBee.Checksum,
                     expectedMusicBee,
                     StringComparison.Ordinal)
+                    || !verifiedPhone.Exists
                     || !string.Equals(
                         verifiedPhone.Checksum,
                         expectedPhone,
@@ -95,7 +120,22 @@ namespace Shmembee.Application.Synchronization
                         "Post-write verification did not match the synchronization plan.");
                 }
 
-                history.Completed(plan, verifiedMusicBee, verifiedPhone);
+                try
+                {
+                    history.Completed(plan, verifiedMusicBee, verifiedPhone);
+                }
+                catch (Exception exception)
+                {
+                    string details = "Both playlists were written and verified, but "
+                        + "the accepted baseline could not be committed: "
+                        + exception.Message;
+                    TryRecordCommitPending(plan, details);
+                    return SynchronizationApplyResult.CommitPending(
+                        details,
+                        verifiedMusicBee,
+                        verifiedPhone);
+                }
+
                 return SynchronizationApplyResult.Succeeded(
                     verifiedMusicBee,
                     verifiedPhone);
@@ -114,12 +154,55 @@ namespace Shmembee.Application.Synchronization
                     details += " Rollback error: " + rollbackError;
                 }
 
-                history.Failed(plan, details);
+                TryRecordFailure(plan, details);
+                if (exception is StaleDuringApplyException stale)
+                {
+                    return SynchronizationApplyResult.Stale(
+                        stale.MusicBeeChecksum,
+                        stale.PhoneChecksum);
+                }
+
                 return exception is OperationCanceledException
                     ? SynchronizationApplyResult.Cancelled(details)
                     : SynchronizationApplyResult.Failed(details);
             }
         }
+
+        private void TryRecordFailure(SynchronizationPlan plan, string details)
+        {
+            try
+            {
+                history.Failed(plan, details);
+            }
+            catch (Exception)
+            {
+                // Preserve the primary endpoint result if local history also fails.
+            }
+        }
+
+        private void TryRecordCommitPending(
+            SynchronizationPlan plan,
+            string details)
+        {
+            try
+            {
+                history.CommitPending(plan, details);
+            }
+            catch (Exception)
+            {
+                // Verified endpoints must not be rolled back for local history failure.
+            }
+        }
+
+        private static bool StateMatches(
+            PlaylistState state,
+            bool expectedExists,
+            string expectedChecksum) =>
+            state.Exists == expectedExists
+            && string.Equals(
+                state.Checksum,
+                expectedChecksum,
+                StringComparison.Ordinal);
 
         private string Rollback(
             SynchronizationPlan plan,
@@ -234,6 +317,16 @@ namespace Shmembee.Application.Synchronization
                 null,
                 null);
 
+        public static SynchronizationApplyResult CommitPending(
+            string details,
+            PlaylistState musicBee,
+            PlaylistState phone) =>
+            new SynchronizationApplyResult(
+                SynchronizationApplyStatus.CommitPending,
+                details,
+                musicBee,
+                phone);
+
         public static SynchronizationApplyResult Cancelled(string details) =>
             new SynchronizationApplyResult(
                 SynchronizationApplyStatus.Cancelled,
@@ -245,8 +338,25 @@ namespace Shmembee.Application.Synchronization
     public enum SynchronizationApplyStatus
     {
         Succeeded,
+        CommitPending,
         Stale,
         Cancelled,
         Failed
+    }
+
+    internal sealed class StaleDuringApplyException : Exception
+    {
+        public StaleDuringApplyException(
+            string musicBeeChecksum,
+            string phoneChecksum)
+            : base("An endpoint changed during apply.")
+        {
+            MusicBeeChecksum = musicBeeChecksum;
+            PhoneChecksum = phoneChecksum;
+        }
+
+        public string MusicBeeChecksum { get; }
+
+        public string PhoneChecksum { get; }
     }
 }

@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Shmembee.Application\Shmembee.Application.csproj" />
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 
   <PropertyGroup>

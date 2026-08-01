@@ -92,6 +92,76 @@ public sealed class Phase3Tests : IDisposable
     }
 
     [Fact]
+    public void CoordinatorRollsBackWhenMusicBeeMutatesThenRejectsWrite()
+    {
+        var musicBee = new MemoryMusicBee("old") { RejectAfterMutation = true };
+        var phone = new MemoryPhone("old-phone");
+        var history = new MemoryHistory();
+        SynchronizationPlan plan = Plan(
+            musicBee.State.Checksum,
+            phone.State.Checksum);
+
+        SynchronizationApplyResult result = new SynchronizationCoordinator(
+            musicBee,
+            phone,
+            history).Apply(plan, CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.Failed, result.Status);
+        Assert.Equal(new[] { "old" }, musicBee.State.Entries);
+        Assert.Equal(2, musicBee.ReplaceCount);
+        Assert.Equal(0, phone.ReplaceCount);
+    }
+
+    [Fact]
+    public void CoordinatorRejectsMissingPhoneFileAfterEmptyWrite()
+    {
+        var musicBee = new MemoryMusicBee();
+        var phone = new MemoryPhone { DropReplacement = true };
+        var history = new MemoryHistory();
+        SynchronizationPlan plan = new(
+            Guid.NewGuid(),
+            "playlist",
+            "Fixture",
+            "playlist-url",
+            "Fixture.m3u",
+            true,
+            musicBee.State.Checksum,
+            phone.State.Checksum,
+            Array.Empty<SynchronizationTrack>());
+
+        SynchronizationApplyResult result = new SynchronizationCoordinator(
+            musicBee,
+            phone,
+            history).Apply(plan, CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.Failed, result.Status);
+        Assert.Equal(1, history.FailedCount);
+        Assert.Equal(0, history.CompletedCount);
+    }
+
+    [Fact]
+    public void CoordinatorDoesNotRollbackVerifiedWritesWhenBaselineCommitFails()
+    {
+        var musicBee = new MemoryMusicBee("old");
+        var phone = new MemoryPhone("old-phone");
+        var history = new MemoryHistory { FailCompletion = true };
+        SynchronizationPlan plan = Plan(
+            musicBee.State.Checksum,
+            phone.State.Checksum);
+
+        SynchronizationApplyResult result = new SynchronizationCoordinator(
+            musicBee,
+            phone,
+            history).Apply(plan, CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.CommitPending, result.Status);
+        Assert.Equal(new[] { "new-url" }, musicBee.State.Entries);
+        Assert.Equal(new[] { "Music/New.mp3" }, phone.State.Entries);
+        Assert.Equal(0, phone.RestoreCount);
+        Assert.Equal(1, history.CommitPendingCount);
+    }
+
+    [Fact]
     public void FileWriterBacksUpReplacesAndRestores()
     {
         string playlists = Path.Combine(temporaryDirectory, "playlists");
@@ -191,13 +261,17 @@ public sealed class Phase3Tests : IDisposable
 
         public int ReplaceCount { get; private set; }
 
+        public bool RejectAfterMutation { get; set; }
+
         public PlaylistState Read(string playlistUrl) => State;
 
         public bool Replace(string playlistUrl, IReadOnlyList<string> canonicalUrls)
         {
             ReplaceCount++;
             State = CreateState(canonicalUrls);
-            return true;
+            bool accepted = !RejectAfterMutation;
+            RejectAfterMutation = false;
+            return accepted;
         }
     }
 
@@ -215,6 +289,8 @@ public sealed class Phase3Tests : IDisposable
         public PlaylistState State { get; private set; }
 
         public bool FailReplace { get; set; }
+
+        public bool DropReplacement { get; set; }
 
         public Action? BeforeReplace { get; set; }
 
@@ -243,7 +319,9 @@ public sealed class Phase3Tests : IDisposable
                 throw new IOException("Simulated phone failure.");
             }
 
-            State = CreateState(phonePaths);
+            State = DropReplacement
+                ? CreateState(Array.Empty<string>(), exists: false)
+                : CreateState(phonePaths);
         }
 
         public void Restore(PlaylistBackup ignored)
@@ -261,13 +339,27 @@ public sealed class Phase3Tests : IDisposable
 
         public int FailedCount { get; private set; }
 
+        public int CommitPendingCount { get; private set; }
+
+        public bool FailCompletion { get; set; }
+
         public void Started(SynchronizationPlan plan) => StartedCount++;
 
         public void Completed(
             SynchronizationPlan plan,
             PlaylistState musicBeeResult,
-            PlaylistState phoneResult) =>
+            PlaylistState phoneResult)
+        {
+            if (FailCompletion)
+            {
+                throw new IOException("Simulated history failure.");
+            }
+
             CompletedCount++;
+        }
+
+        public void CommitPending(SynchronizationPlan plan, string details) =>
+            CommitPendingCount++;
 
         public void Failed(SynchronizationPlan plan, string details) => FailedCount++;
     }

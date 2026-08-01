@@ -56,6 +56,10 @@ namespace MusicBeePlugin
                     "mnuTools/Shmembee: Repair missing-track proof playlist",
                     string.Empty,
                     RepairMissingTrackProof);
+                mbApiInterface.MB_AddMenuItem(
+                    "mnuTools/Shmembee: Open Phase 3 test harness",
+                    string.Empty,
+                    OpenPhase3Harness);
             }
 
             return about;
@@ -183,6 +187,33 @@ namespace MusicBeePlugin
                 "Shmembee proof",
                 MessageBoxButtons.OK,
                 verified ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+
+        private void OpenPhase3Harness(object sender, EventArgs eventArgs)
+        {
+            if (string.IsNullOrEmpty(pluginStoragePath))
+            {
+                ShowProofError("MusicBee did not provide a persistent storage path.");
+                return;
+            }
+
+            try
+            {
+                string storagePath = pluginStoragePath
+                    ?? throw new InvalidOperationException(
+                        "MusicBee did not provide a persistent storage path.");
+                using (var form = new Phase3HarnessForm(
+                    new Phase3HarnessController(
+                        mbApiInterface,
+                        storagePath)))
+                {
+                    form.ShowDialog();
+                }
+            }
+            catch (Exception exception)
+            {
+                ShowProofError(exception.Message);
+            }
         }
 
         private string? FindPlaylistUrl(string playlistName)

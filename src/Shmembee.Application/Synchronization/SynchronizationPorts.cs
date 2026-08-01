@@ -34,6 +34,8 @@ namespace Shmembee.Application.Synchronization
             PlaylistState musicBeeResult,
             PlaylistState phoneResult);
 
+        void CommitPending(SynchronizationPlan plan, string details);
+
         void Failed(SynchronizationPlan plan, string details);
     }
 

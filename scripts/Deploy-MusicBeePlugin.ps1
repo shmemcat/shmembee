@@ -25,22 +25,18 @@ if (-not (Test-Path $pluginDirectory -PathType Container)) {
     throw "MusicBee plugin directory was not found: $pluginDirectory"
 }
 
-$assemblies = @(
-    "MB_Shmembee.dll",
-    "Shmembee.Application.dll",
-    "Shmembee.Core.dll",
-    "Shmembee.Infrastructure.dll",
-    "Shmembee.Windows.dll"
-)
+$assemblies = Get-ChildItem $outputPath -Filter "*.dll" -File
+$nativeSqlite = Join-Path $outputPath "runtimes\win-x86\native\e_sqlite3.dll"
+if (-not (Test-Path $nativeSqlite -PathType Leaf)) {
+    throw "Expected x86 SQLite runtime was not found: $nativeSqlite"
+}
+$assemblies += Get-Item $nativeSqlite
 
 foreach ($assembly in $assemblies) {
-    $source = Join-Path $outputPath $assembly
-    if (-not (Test-Path $source -PathType Leaf)) {
-        throw "Expected build output was not found: $source"
-    }
+    $source = $assembly.FullName
 
-    $destination = Join-Path $pluginDirectory $assembly
-    if ($PSCmdlet.ShouldProcess($destination, "Deploy $assembly")) {
+    $destination = Join-Path $pluginDirectory $assembly.Name
+    if ($PSCmdlet.ShouldProcess($destination, "Deploy $($assembly.Name)")) {
         Copy-Item $source $destination -Force
     }
 }

@@ -16,7 +16,8 @@ namespace Shmembee.Infrastructure.Persistence
             connectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = databasePath,
-                Mode = SqliteOpenMode.ReadWriteCreate
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                ForeignKeys = true
             }.ToString();
         }
 
@@ -178,16 +179,30 @@ VALUES (
 
         public void Failed(SynchronizationPlan plan, string details)
         {
+            SetTerminalStatus(plan, "failed", details);
+        }
+
+        public void CommitPending(SynchronizationPlan plan, string details)
+        {
+            SetTerminalStatus(plan, "commit_pending", details);
+        }
+
+        private void SetTerminalStatus(
+            SynchronizationPlan plan,
+            string status,
+            string details)
+        {
             Execute(
                 @"
 UPDATE sync_operations
 SET completed_utc = $completedUtc,
-    status = 'failed',
+    status = $status,
     details = $details
 WHERE id = $id;",
                 command =>
                 {
                     command.Parameters.AddWithValue("$completedUtc", UtcNow());
+                    command.Parameters.AddWithValue("$status", status);
                     command.Parameters.AddWithValue("$details", details);
                     command.Parameters.AddWithValue(
                         "$id",

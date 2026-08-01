@@ -3,9 +3,9 @@
 Shmembee is a vibe-coded Windows-first MusicBee plugin for safe, bidirectional playlist
 reconciliation between MusicBee and GoneMAD M3U/M3U8 playlists.
 
-The repository is currently at its contract-spike stage. It contains the
-project boundaries and a minimal `MB_Shmembee.dll` lifecycle plugin, but it
-does not yet modify MusicBee playlists or phone files.
+The repository contains the core reconciliation and transactional apply
+boundaries plus a deliberately constrained MusicBee test harness. The harness
+can modify only the disposable `Shmembee Phase 3 Test` playlist.
 
 ## Architecture
 
@@ -66,8 +66,8 @@ approved:
 - SQLite stores versioned snapshots, stable identities, aliases, and operation
   history.
 
-The current engine computes proposals only. It does not write approved results
-to MusicBee or the phone.
+The general engine computes proposals only. The Phase 3 disposable harness
+connects reviewed, non-conflicting proposals to the transactional apply path.
 
 ## Transactional synchronization
 
@@ -84,10 +84,12 @@ Phase 3 adds an explicit apply boundary for reviewed proposals:
 - SQLite records started, completed, and failed operations plus the latest
   accepted ordered baseline.
 
-The Windows transport currently operates on a staged playlist directory. The
-existing MTP capture/deployment scripts remain the proven device-transfer
-boundary while native WPD transfer is implemented behind the same interface.
+The constrained Phase 3 harness uses Windows Shell portable-device automation
+to capture and replace only
+`MLE S24U\Internal storage\gmmp\playlists\Shmembee Phase 3 Test.m3u`.
+This remains a disposable integration-test boundary, not general playlist
+synchronization.
 
 ## License
 
-No license has been selected yet. All rights are reserved until one is added.
+All rights reserved.
