@@ -106,6 +106,7 @@ namespace MusicBeePlugin
         private readonly TransportPhonePlaylistWriter phoneWriter;
         private readonly IPhonePlaylistCatalogReader phoneCatalogReader;
         private readonly IPhonePlaylistSnapshotReader? phoneSnapshotReader;
+        private readonly PostSyncPlaylistBackup? postSyncBackup;
         private readonly AcceptedBaselineStore baselineStore;
         private readonly SynchronizationHistoryStore history;
         private readonly string playlistId;
@@ -143,6 +144,11 @@ namespace MusicBeePlugin
                 TimeSpan.FromSeconds(settings.TimeoutSeconds));
             phoneCatalogReader = transport;
             phoneSnapshotReader = transport;
+            postSyncBackup = string.IsNullOrWhiteSpace(settings.PostSyncBackupPath)
+                ? null
+                : new PostSyncPlaylistBackup(
+                    transport,
+                    settings.PostSyncBackupPath);
             phoneWriter = new TransportPhonePlaylistWriter(
                 transport,
                 string.IsNullOrWhiteSpace(settings.BackupPath)
@@ -473,22 +479,25 @@ namespace MusicBeePlugin
                         group => group.Key,
                         group => group.First().MusicBeeUrl,
                         StringComparer.OrdinalIgnoreCase);
+            HashSet<string>? preferredUrlKeys =
+                TrackResolverIndex.CreatePreferredUrlKeys(preferredUrls);
             var resolved = new List<ResolvedHarnessTrack>();
             foreach (string path in phoneState.Entries)
             {
                 ResolutionResult result = resolver.Resolve(
                     CreatePhoneReference(path),
                     approvedMappings,
-                    preferredUrls);
+                    preferredUrlKeys);
                 if (result.Status != ResolutionStatus.Matched || result.Match == null)
                 {
-                    throw new InvalidOperationException(
-                        "Phone track could not be resolved safely: "
-                            + path
-                            + " ("
+                    resolved.Add(ResolvedHarnessTrack.UnresolvedPhone(
+                        path,
+                        "Phone track could not be resolved safely ("
                             + result.Status
                             + ")."
-                            + DescribeResolutionCandidates(result));
+                            + DescribeResolutionCandidates(result)
+                            + " Exclude it to remove this stale playlist entry."));
+                    continue;
                 }
 
                 resolved.Add(new ResolvedHarnessTrack(
@@ -518,9 +527,11 @@ namespace MusicBeePlugin
             new PlaylistSideEntry(
                 new TrackIdentity(track.TrackId),
                 track.PhonePath,
-                musicBeeValue: track.MusicBeeUrl,
+                musicBeeValue: track.IsResolved ? track.MusicBeeUrl : null,
                 phoneValue: track.PhonePath,
-                phonePathProof: PhonePathProof.Proven);
+                phonePathProof: PhonePathProof.Proven,
+                musicBeeValueUnavailable: !track.IsResolved,
+                unavailableReason: track.UnavailableReason);
 
         public void AttachUiDispatcher(Control dispatcher)
         {
@@ -867,6 +878,22 @@ namespace MusicBeePlugin
                     + " failed:" + Environment.NewLine + string.Join(Environment.NewLine, errors);
             }
 
+            if (succeeded.Count > 0 && postSyncBackup != null)
+            {
+                try
+                {
+                    string backupPath = postSyncBackup.Create();
+                    summary += Environment.NewLine
+                        + "Post-sync M3U backup: " + backupPath;
+                }
+                catch (Exception exception)
+                {
+                    summary += Environment.NewLine
+                        + "The sync succeeded, but the post-sync M3U backup failed: "
+                        + exception.Message;
+                }
+            }
+
             return new HarnessBatchApplyResult(
                 succeeded.Count,
                 errors.Count,
@@ -1144,10 +1171,33 @@ namespace MusicBeePlugin
                 proposed,
                 preview.MusicBeeState.Checksum,
                 preview.PhoneState.Checksum);
-            return new SynchronizationCoordinator(
+            SynchronizationApplyResult result = new SynchronizationCoordinator(
                 musicBeeWriter,
                 phoneWriter,
                 history).Apply(plan, cancellationToken);
+            if (result.Status != SynchronizationApplyStatus.Succeeded
+                || postSyncBackup == null)
+            {
+                return result;
+            }
+
+            try
+            {
+                string backupPath = postSyncBackup.Create();
+                return SynchronizationApplyResult.Succeeded(
+                    result.MusicBeeState!,
+                    result.PhoneState!,
+                    result.Details + " Post-sync M3U backup: " + backupPath);
+            }
+            catch (Exception exception)
+            {
+                return SynchronizationApplyResult.Succeeded(
+                    result.MusicBeeState!,
+                    result.PhoneState!,
+                    result.Details
+                        + " The sync succeeded, but the post-sync M3U backup failed: "
+                        + exception.Message);
+            }
         }
 
         private SynchronizationPlan CreatePlan(
@@ -1197,7 +1247,9 @@ namespace MusicBeePlugin
         {
             var available = new Dictionary<string, Queue<string>>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (ResolvedHarnessTrack track in phoneTracks.Concat(
+            foreach (ResolvedHarnessTrack track in phoneTracks
+                .Where(track => track.IsResolved)
+                .Concat(
                 baseline?.Tracks.Select(track => new ResolvedHarnessTrack(
                     track.TrackId,
                     track.MusicBeeUrl,
@@ -1607,11 +1659,15 @@ namespace MusicBeePlugin
         public ResolvedHarnessTrack(
             string trackId,
             string musicBeeUrl,
-            string phonePath)
+            string phonePath,
+            bool isResolved = true,
+            string? unavailableReason = null)
         {
             TrackId = trackId;
             MusicBeeUrl = musicBeeUrl;
             PhonePath = phonePath;
+            IsResolved = isResolved;
+            UnavailableReason = unavailableReason;
         }
 
         public string TrackId { get; }
@@ -1619,5 +1675,19 @@ namespace MusicBeePlugin
         public string MusicBeeUrl { get; }
 
         public string PhonePath { get; }
+
+        public bool IsResolved { get; }
+
+        public string? UnavailableReason { get; }
+
+        public static ResolvedHarnessTrack UnresolvedPhone(
+            string phonePath,
+            string reason) =>
+            new ResolvedHarnessTrack(
+                "unresolved-phone:" + TrackPathNormalizer.NormalizePhonePath(phonePath),
+                phonePath,
+                phonePath,
+                isResolved: false,
+                unavailableReason: reason);
     }
 }

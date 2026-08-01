@@ -15,6 +15,8 @@ namespace Shmembee.Infrastructure.Settings
         public const string DefaultDeviceName = "MLE S24U";
         public const string DefaultStorageName = "Internal storage";
         public const string DefaultPlaylistFolder = "gmmp/playlists";
+        public const string DefaultPostSyncBackupPath =
+            @"D:\My Documents\Shmembee Backups";
 
         public DesktopSettings()
         {
@@ -24,6 +26,7 @@ namespace Shmembee.Infrastructure.Settings
             TimeoutSeconds = 300;
             DatabasePath = string.Empty;
             BackupPath = string.Empty;
+            PostSyncBackupPath = DefaultPostSyncBackupPath;
             PlaylistAssociations = new List<PlaylistAssociation>();
         }
 
@@ -50,6 +53,9 @@ namespace Shmembee.Infrastructure.Settings
 
         [DataMember(Order = 8)]
         public List<PlaylistAssociation> PlaylistAssociations { get; set; }
+
+        [DataMember(Order = 9)]
+        public string PostSyncBackupPath { get; set; }
     }
 
     [DataContract]
@@ -223,7 +229,10 @@ namespace Shmembee.Infrastructure.Settings
                 BackupPath = settings.BackupPath?.Trim() ?? string.Empty,
                 PlaylistSyncWarningAcknowledged =
                     settings.PlaylistSyncWarningAcknowledged,
-                PlaylistAssociations = ValidateAssociations(settings.PlaylistAssociations)
+                PlaylistAssociations = ValidateAssociations(settings.PlaylistAssociations),
+                PostSyncBackupPath = OptionalOrDefault(
+                    settings.PostSyncBackupPath,
+                    DesktopSettings.DefaultPostSyncBackupPath)
             };
             return validated;
         }

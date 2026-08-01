@@ -139,6 +139,46 @@ public sealed class PlaylistDiffEngineTests
     }
 
     [Fact]
+    public void UnresolvedPhoneOccurrenceCanBeExcludedButNotRetained()
+    {
+        var unresolved = new PlaylistSideEntry(
+            Track("unresolved-phone:music/missing.mp3"),
+            "Music/Missing.mp3",
+            phoneValue: "Music/Missing.mp3",
+            phonePathProof: PhonePathProof.Proven,
+            musicBeeValueUnavailable: true,
+            unavailableReason: "The phone entry has no MusicBee match.");
+        PlaylistDiff diff = Compare(
+            Array.Empty<PlaylistSideEntry>(),
+            new[] { unresolved });
+        PlaylistOccurrence occurrence = Assert.Single(diff.Occurrences);
+
+        PlaylistBuildResult excluded = PlaylistResultBuilder.BuildCustom(
+            diff,
+            new[]
+            {
+                new PlaylistOccurrenceDecision(
+                    occurrence.Key,
+                    OccurrenceChoice.Exclude)
+            },
+            PlaylistSide.Phone);
+        PlaylistBuildResult retained = PlaylistResultBuilder.BuildCustom(
+            diff,
+            new[]
+            {
+                new PlaylistOccurrenceDecision(
+                    occurrence.Key,
+                    OccurrenceChoice.Include)
+            },
+            PlaylistSide.Phone);
+
+        Assert.False(excluded.IsBlocked);
+        Assert.Empty(excluded.Entries);
+        Assert.True(retained.IsBlocked);
+        Assert.Contains("no MusicBee match", retained.BlockedReasons.Single());
+    }
+
+    [Fact]
     public void ReviewedDraftBecomesStaleWhenEitherChecksumChanges()
     {
         var pair = new PlaylistPairKey("musicbee", "phone");

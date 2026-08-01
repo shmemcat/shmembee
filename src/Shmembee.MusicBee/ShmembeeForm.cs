@@ -39,6 +39,7 @@ namespace MusicBeePlugin
         private readonly TextBox deviceNameText = new TextBox();
         private readonly TextBox storageNameText = new TextBox();
         private readonly TextBox playlistFolderText = new TextBox();
+        private readonly TextBox postSyncBackupPathText = new TextBox();
         private readonly string storagePath;
         private readonly ReviewedPlaylistDraftStore? reviewDraftStore;
         private readonly Plugin.MusicBeeApiInterface? api;
@@ -723,9 +724,17 @@ namespace MusicBeePlugin
                 playlistFolderText,
                 "PlaylistFolder",
                 controller.Settings.PlaylistFolder);
+            InitializeSettingText(
+                postSyncBackupPathText,
+                "PostSyncBackupPath",
+                controller.Settings.PostSyncBackupPath);
             panel.Controls.Add(CreateField("Device name", deviceNameText), 0, 2);
             panel.Controls.Add(CreateField("Storage", storageNameText), 0, 3);
             panel.Controls.Add(CreateField("Playlist folder", playlistFolderText), 0, 4);
+            panel.Controls.Add(
+                CreateField("Post-sync M3U backup folder", postSyncBackupPathText),
+                0,
+                5);
             var save = new Button
             {
                 Text = "Save settings",
@@ -735,7 +744,7 @@ namespace MusicBeePlugin
                 Margin = new Padding(0, 14, 0, 0)
             };
             save.Click += (_, _) => SaveSettings();
-            panel.Controls.Add(save, 0, 5);
+            panel.Controls.Add(save, 0, 6);
             page.Controls.Add(panel);
             return page;
         }
@@ -965,6 +974,7 @@ namespace MusicBeePlugin
             settings.DeviceName = deviceNameText.Text;
             settings.StorageName = storageNameText.Text;
             settings.PlaylistFolder = playlistFolderText.Text;
+            settings.PostSyncBackupPath = postSyncBackupPathText.Text;
             new DesktopSettingsStore(
                 System.IO.Path.Combine(storagePath, "settings.json")).Save(settings);
             SettingsSaveRequested?.Invoke(this, EventArgs.Empty);

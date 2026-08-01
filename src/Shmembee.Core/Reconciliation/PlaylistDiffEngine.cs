@@ -48,7 +48,9 @@ namespace Shmembee.Core.Reconciliation
             string sourceValue,
             string? musicBeeValue = null,
             string? phoneValue = null,
-            PhonePathProof phonePathProof = PhonePathProof.NotRequired)
+            PhonePathProof phonePathProof = PhonePathProof.NotRequired,
+            bool musicBeeValueUnavailable = false,
+            string? unavailableReason = null)
         {
             Track = track ?? throw new ArgumentNullException(nameof(track));
             SourceValue = !string.IsNullOrWhiteSpace(sourceValue)
@@ -57,6 +59,8 @@ namespace Shmembee.Core.Reconciliation
             MusicBeeValue = musicBeeValue;
             PhoneValue = phoneValue;
             PhonePathProof = phonePathProof;
+            MusicBeeValueUnavailable = musicBeeValueUnavailable;
+            UnavailableReason = unavailableReason;
         }
 
         public TrackIdentity Track { get; }
@@ -69,9 +73,13 @@ namespace Shmembee.Core.Reconciliation
 
         public PhonePathProof PhonePathProof { get; }
 
+        public bool MusicBeeValueUnavailable { get; }
+
+        public string? UnavailableReason { get; }
+
         public string? ValueFor(PlaylistSide side) =>
             side == PlaylistSide.MusicBee
-                ? MusicBeeValue ?? SourceValue
+                ? MusicBeeValueUnavailable ? null : MusicBeeValue ?? SourceValue
                 : PhoneValue ?? (PhonePathProof == PhonePathProof.Unknown ? null : SourceValue);
     }
 
@@ -118,15 +126,36 @@ namespace Shmembee.Core.Reconciliation
 
         public bool IsChoiceBlocked(OccurrenceChoice choice, out string? reason)
         {
-            bool includesMusicBeeOnlyOnPhone =
-                Membership == OccurrenceMembership.MusicBeeOnly
-                && (choice == OccurrenceChoice.MusicBee || choice == OccurrenceChoice.Include)
-                && MusicBeeEntry?.ValueFor(PlaylistSide.Phone) == null;
+            PlaylistSideEntry? selected = choice == OccurrenceChoice.MusicBee
+                ? MusicBeeEntry
+                : choice == OccurrenceChoice.Phone
+                    ? PhoneEntry
+                    : choice == OccurrenceChoice.Include
+                        ? MusicBeeEntry ?? PhoneEntry
+                        : null;
+            if (selected == null || choice == OccurrenceChoice.Exclude)
+            {
+                reason = null;
+                return false;
+            }
 
-            reason = includesMusicBeeOnlyOnPhone
-                ? "The phone path is unknown or unproven for this MusicBee occurrence."
-                : null;
-            return includesMusicBeeOnlyOnPhone;
+            if (selected.ValueFor(PlaylistSide.MusicBee) == null)
+            {
+                reason = selected.UnavailableReason
+                    ?? "This phone occurrence could not be matched to a MusicBee track. "
+                    + "Exclude it to remove the stale playlist entry.";
+                return true;
+            }
+
+            if (selected.ValueFor(PlaylistSide.Phone) == null)
+            {
+                reason = selected.UnavailableReason
+                    ?? "The phone path is unknown or unproven for this MusicBee occurrence.";
+                return true;
+            }
+
+            reason = null;
+            return false;
         }
     }
 

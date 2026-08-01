@@ -1,7 +1,9 @@
 using Microsoft.Data.Sqlite;
 using Shmembee.Application.Synchronization;
+using Shmembee.Application.Ports;
 using Shmembee.Infrastructure.Diagnostics;
 using Shmembee.Infrastructure.Persistence;
+using Shmembee.Infrastructure.Playlists;
 using Shmembee.Infrastructure.Settings;
 
 #pragma warning disable CA1707
@@ -21,6 +23,9 @@ public sealed class Phase4BackendTests : IDisposable
         Assert.Equal("MLE S24U", settings.DeviceName);
         Assert.Equal("Internal storage", settings.StorageName);
         Assert.Equal("gmmp/playlists", settings.PlaylistFolder);
+        Assert.Equal(
+            @"D:\My Documents\Shmembee Backups",
+            settings.PostSyncBackupPath);
         Assert.Empty(settings.PlaylistAssociations);
     }
 
@@ -34,6 +39,7 @@ public sealed class Phase4BackendTests : IDisposable
             DeviceName = " Phone ",
             StorageName = " Storage ",
             PlaylistFolder = @"custom\playlists",
+            PostSyncBackupPath = @" D:\Playlist Archives ",
             PlaylistAssociations =
             [
                 new("playlist-1", "Road.m3u8"),
@@ -47,6 +53,7 @@ public sealed class Phase4BackendTests : IDisposable
         Assert.Equal("Phone", loaded.DeviceName);
         Assert.Equal("Storage", loaded.StorageName);
         Assert.Equal("custom/playlists", loaded.PlaylistFolder);
+        Assert.Equal(@"D:\Playlist Archives", loaded.PostSyncBackupPath);
         PlaylistAssociation association = Assert.Single(loaded.PlaylistAssociations);
         Assert.Equal("playlist-1", association.PlaylistId);
         Assert.Equal("Road.m3u8", association.PhoneBackingName);
@@ -62,6 +69,29 @@ public sealed class Phase4BackendTests : IDisposable
         DesktopSettings settings = new DesktopSettingsStore(path).Load();
 
         Assert.Equal(DesktopSettings.DefaultDeviceName, settings.DeviceName);
+    }
+
+    [Fact]
+    public void PostSyncBackupWritesAllRawPlaylistsIntoTimestampedDirectory()
+    {
+        DateTimeOffset timestamp = new(2026, 8, 1, 16, 32, 45, TimeSpan.FromHours(-7));
+        string root = Path.Combine(temporaryDirectory, "post-sync");
+        var backup = new PostSyncPlaylistBackup(
+            new SnapshotReader(
+            [
+                new PhonePlaylistContent("1", "Road.m3u", [1, 2, 3]),
+                new PhonePlaylistContent("2", "Mix.M3U8", [4, 5])
+            ]),
+            root,
+            () => timestamp);
+
+        string first = backup.Create();
+        string second = backup.Create();
+
+        Assert.Equal(Path.Combine(root, "2026-08-01 16-32-45"), first);
+        Assert.Equal(Path.Combine(root, "2026-08-01 16-32-45-02"), second);
+        Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(first, "Road.m3u")));
+        Assert.Equal(new byte[] { 4, 5 }, File.ReadAllBytes(Path.Combine(first, "Mix.M3U8")));
     }
 
     [Fact]
@@ -134,4 +164,16 @@ public sealed class Phase4BackendTests : IDisposable
             "musicbee-checksum",
             "phone-checksum",
             Array.Empty<SynchronizationTrack>());
+
+    private sealed class SnapshotReader : IPhonePlaylistSnapshotReader
+    {
+        private readonly IReadOnlyList<PhonePlaylistContent> playlists;
+
+        public SnapshotReader(IReadOnlyList<PhonePlaylistContent> playlists)
+        {
+            this.playlists = playlists;
+        }
+
+        public IReadOnlyList<PhonePlaylistContent> ReadPlaylistSnapshot() => playlists;
+    }
 }

@@ -481,10 +481,11 @@ namespace Shmembee.Application.Synchronization
 
         public static SynchronizationApplyResult Succeeded(
             PlaylistState musicBee,
-            PlaylistState phone) =>
+            PlaylistState phone,
+            string details = "Synchronization verified.") =>
             new SynchronizationApplyResult(
                 SynchronizationApplyStatus.Succeeded,
-                "Synchronization verified.",
+                details,
                 musicBee,
                 phone);
 

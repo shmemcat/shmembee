@@ -179,18 +179,23 @@ namespace Shmembee.Core.Resolution
             IReadOnlyDictionary<string, string>? approvedMappings = null,
             IEnumerable<string>? preferredUrls = null)
         {
+            return Resolve(
+                reference,
+                approvedMappings,
+                CreatePreferredUrlKeys(preferredUrls));
+        }
+
+        public ResolutionResult Resolve(
+            TrackReference reference,
+            IReadOnlyDictionary<string, string>? approvedMappings,
+            HashSet<string>? preferredUrlKeys)
+        {
             if (reference == null)
             {
                 throw new ArgumentNullException(nameof(reference));
             }
 
             string phoneKey = TrackPathNormalizer.NormalizePhonePath(reference.Path);
-            HashSet<string>? preferredUrlKeys = preferredUrls == null
-                ? null
-                : new HashSet<string>(
-                    preferredUrls.Select(
-                        TrackPathNormalizer.NormalizeWindowsPath),
-                    StringComparer.Ordinal);
             string approvedUrl;
             if (approvedMappings != null
                 && approvedMappings.TryGetValue(phoneKey, out approvedUrl))
@@ -359,6 +364,15 @@ namespace Shmembee.Core.Resolution
 
             return ResolutionResult.Unmatched("No confident library match");
         }
+
+        public static HashSet<string>? CreatePreferredUrlKeys(
+            IEnumerable<string>? preferredUrls) =>
+            preferredUrls == null
+                ? null
+                : new HashSet<string>(
+                    preferredUrls.Select(
+                        TrackPathNormalizer.NormalizeWindowsPath),
+                    StringComparer.Ordinal);
 
         private ResolutionResult? FromCandidates(
             List<LibraryTrack> candidates,
