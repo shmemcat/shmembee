@@ -50,6 +50,21 @@ dotnet format Shmembee.sln --verify-no-changes --no-restore
 Build properties are centralized in `Directory.Build.props`, and NuGet package
 versions are centralized in `Directory.Packages.props`.
 
+Run the complete local check with:
+
+```powershell
+.\scripts\Check.ps1
+```
+
+Install the repository-managed pre-commit hook once per clone:
+
+```powershell
+.\scripts\Install-GitHooks.ps1
+```
+
+The hook runs the same restore, format, build, and test sequence. Windows CI
+also runs that sequence and publishes the x86 `MB_Shmembee.dll` artifact.
+
 ## MusicBee compatibility boundary
 
 The installed MusicBee executable is normally under:

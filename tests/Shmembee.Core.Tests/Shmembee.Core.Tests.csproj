@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shmembee.Core\Shmembee.Core.csproj" />
+    <ProjectReference Include="..\..\src\Shmembee.Infrastructure\Shmembee.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

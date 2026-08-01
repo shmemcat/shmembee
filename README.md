@@ -46,6 +46,11 @@ compilation is not proof that MusicBee can load the plugin; follow
 [the development setup](docs/development-setup.md) to deploy it and validate a
 minimal startup/shutdown cycle.
 
+The MusicBee host and missing-track repair proofs have passed, as has the
+[GoneMAD playlist contract](docs/gonemad-contract.md). Current development is
+building the durable state and read-only reconciliation layers on those proven
+boundaries.
+
 ## License
 
 No license has been selected yet. All rights are reserved until one is added.

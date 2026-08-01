@@ -1,0 +1,49 @@
+name: Windows
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pinned .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+          cache: true
+          cache-dependency-path: |
+            Directory.Packages.props
+            **/*.csproj
+
+      - name: Restore
+        run: dotnet restore Shmembee.sln
+
+      - name: Verify formatting
+        run: dotnet format Shmembee.sln --verify-no-changes --no-restore
+
+      - name: Build x86 Release plugin and solution
+        run: dotnet build Shmembee.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test Shmembee.sln --configuration Release --no-build --no-restore
+
+      - name: Publish plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MB_Shmembee-net48-x86
+          path: |
+            src/Shmembee.MusicBee/bin/Release/net48/MB_Shmembee.dll
+            src/Shmembee.MusicBee/bin/Release/net48/Shmembee.*.dll
+          if-no-files-found: error
