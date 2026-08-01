@@ -92,6 +92,16 @@ namespace Shmembee.Infrastructure.Playlists
             }
         }
 
+        public void Delete(string backingName, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string path = GetPlaylistPath(backingName);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+
         public void Restore(PlaylistBackup backup)
         {
             string destination = GetPlaylistPath(backup.BackingName);

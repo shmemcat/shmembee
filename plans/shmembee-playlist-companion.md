@@ -90,7 +90,7 @@ Conceptual screen:
 
 ### Add tab
 
-- Show playlists that do not contain the track first.
+- Show playlists that contain the track first..
 - Show existing memberships in bold or with an explicit indicator.
 - Permit multi-selection.
 - Prevent duplicate additions by default.
@@ -100,7 +100,8 @@ Conceptual screen:
 
 ### Remove tab
 
-- Show playlists containing the track first.
+- Show playlists containing the track first and bold their titles.
+- Show existing memberships in bold or with an explicit indicator.
 - Permit multi-selection.
 - Show occurrence counts such as `Driving 2×`.
 - Remove all occurrences by default.

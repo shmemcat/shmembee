@@ -4,12 +4,12 @@ Shmembee is a vibe-coded Windows-first MusicBee plugin for safe, bidirectional p
 reconciliation between MusicBee and GoneMAD M3U/M3U8 playlists.
 
 The repository contains the core reconciliation and transactional apply
-boundaries plus a deliberately constrained MusicBee test harness. The harness
-can modify only the disposable `Shmembee Phase 3 Test` playlist.
+boundaries plus a MusicBee-hosted playlist catalog and reviewed diff workflow.
 
 ## Architecture
 
-- `Shmembee.Core`: track identity, ordered diff, merge, and path rules.
+- `Shmembee.Core`: track identity, multiset membership diff, ordering, merge,
+  and path rules.
 - `Shmembee.Application`: synchronization use cases and external ports.
 - `Shmembee.Infrastructure`: persistence, M3U, staging, backups, and logging.
 - `Shmembee.Windows`: Windows phone transport and platform adapters.
@@ -46,10 +46,10 @@ compilation is not proof that MusicBee can load the plugin; follow
 [the development setup](docs/development-setup.md) to deploy it and validate a
 minimal startup/shutdown cycle.
 
-The MusicBee host and missing-track repair proofs have passed, as has the
+The MusicBee host validation has passed, as has the
 [GoneMAD playlist contract](docs/gonemad-contract.md). Current development is
-building the durable state and read-only reconciliation layers on those proven
-boundaries.
+building the durable state and read-only reconciliation layers on those
+validated boundaries.
 
 ## Read-only reconciliation
 
@@ -66,8 +66,9 @@ approved:
 - SQLite stores versioned snapshots, stable identities, aliases, and operation
   history.
 
-The general engine computes proposals only. The Phase 3 disposable harness
-connects reviewed, non-conflicting proposals to the transactional apply path.
+The general engine computes reviewed proposals; the MusicBee host exposes
+playlist pairing, per-track membership choices, order selection, and batch
+application.
 
 ## Transactional synchronization
 
@@ -84,11 +85,10 @@ Phase 3 adds an explicit apply boundary for reviewed proposals:
 - SQLite records started, completed, and failed operations plus the latest
   accepted ordered baseline.
 
-The constrained Phase 3 harness uses Windows Shell portable-device automation
-to capture and replace only
-`MLE S24U\Internal storage\gmmp\playlists\Shmembee Phase 3 Test.m3u`.
-This remains a disposable integration-test boundary, not general playlist
-synchronization.
+The host discovers MusicBee and phone playlists, auto-pairs normalized names,
+and keeps unmatched or ambiguous endpoints visible for review. Checked changes
+are applied sequentially, with each playlist pair independently backed up,
+stale-checked, written, and verified.
 
 ## License
 

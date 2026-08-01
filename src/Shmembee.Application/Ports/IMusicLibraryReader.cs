@@ -15,12 +15,20 @@ namespace Shmembee.Application.Ports
             string url,
             string? artist,
             string? title,
-            int? durationSeconds)
+            int? durationSeconds,
+            string? albumArtist = null,
+            string? album = null,
+            int? discNumber = null,
+            int? trackNumber = null)
         {
             Url = url;
             Artist = artist;
             Title = title;
             DurationSeconds = durationSeconds;
+            AlbumArtist = albumArtist;
+            Album = album;
+            DiscNumber = discNumber;
+            TrackNumber = trackNumber;
         }
 
         public string Url { get; }
@@ -30,6 +38,14 @@ namespace Shmembee.Application.Ports
         public string? Title { get; }
 
         public int? DurationSeconds { get; }
+
+        public string? AlbumArtist { get; }
+
+        public string? Album { get; }
+
+        public int? DiscNumber { get; }
+
+        public int? TrackNumber { get; }
     }
 
     public sealed class MusicPlaylist

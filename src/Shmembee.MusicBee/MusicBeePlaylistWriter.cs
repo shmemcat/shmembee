@@ -42,5 +42,39 @@ namespace MusicBeePlugin
 
             return api.Playlist_SetFiles(playlistUrl, canonicalUrls.ToArray());
         }
+
+        public string Create(
+            string playlistName,
+            IReadOnlyList<string> canonicalUrls)
+        {
+            if (string.IsNullOrWhiteSpace(playlistName))
+            {
+                throw new ArgumentException(
+                    "A playlist name is required.",
+                    nameof(playlistName));
+            }
+
+            if (api.Playlist_CreatePlaylist == null)
+            {
+                throw new InvalidOperationException(
+                    "MusicBee does not expose playlist creation.");
+            }
+
+            string playlistUrl = api.Playlist_CreatePlaylist(
+                string.Empty,
+                playlistName,
+                canonicalUrls.ToArray());
+            if (string.IsNullOrWhiteSpace(playlistUrl))
+            {
+                throw new InvalidOperationException(
+                    "MusicBee rejected playlist creation: " + playlistName);
+            }
+
+            return playlistUrl;
+        }
+
+        public bool Delete(string playlistUrl) =>
+            api.Playlist_DeletePlaylist != null
+            && api.Playlist_DeletePlaylist(playlistUrl);
     }
 }

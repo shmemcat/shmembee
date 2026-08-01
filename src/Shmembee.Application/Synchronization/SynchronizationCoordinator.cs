@@ -168,6 +168,196 @@ namespace Shmembee.Application.Synchronization
             }
         }
 
+        public SynchronizationLifecycleResult CreatePhone(
+            string backingName,
+            string expectedMissingChecksum,
+            IReadOnlyList<string> phonePaths,
+            CancellationToken cancellationToken)
+        {
+            if (phonePaths == null)
+            {
+                throw new ArgumentNullException(nameof(phonePaths));
+            }
+
+            PlaylistState current = phone.Read(backingName);
+            if (current.Exists
+                || !string.Equals(
+                    current.Checksum,
+                    expectedMissingChecksum,
+                    StringComparison.Ordinal))
+            {
+                return SynchronizationLifecycleResult.Stale(
+                    "The phone playlist changed before creation.");
+            }
+
+            PlaylistBackup backup = phone.Backup(backingName, Guid.NewGuid());
+            try
+            {
+                phone.Replace(backingName, phonePaths, cancellationToken);
+                PlaylistState verified = phone.Read(backingName);
+                string expected = PlaylistChecksum.Compute(phonePaths);
+                if (!verified.Exists
+                    || !string.Equals(verified.Checksum, expected, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "Phone playlist creation verification failed.");
+                }
+
+                return SynchronizationLifecycleResult.Succeeded(
+                    "Phone playlist created and verified.",
+                    null,
+                    verified);
+            }
+            catch (Exception exception)
+            {
+                return LifecycleFailure(exception, () => phone.Restore(backup));
+            }
+        }
+
+        public SynchronizationLifecycleResult CreateMusicBee(
+            string playlistName,
+            IReadOnlyList<string> musicBeeUrls,
+            CancellationToken cancellationToken)
+        {
+            if (musicBeeUrls == null)
+            {
+                throw new ArgumentNullException(nameof(musicBeeUrls));
+            }
+
+            string? createdUrl = null;
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                createdUrl = musicBee.Create(playlistName, musicBeeUrls);
+                PlaylistState verified = musicBee.Read(createdUrl);
+                string expected = PlaylistChecksum.Compute(musicBeeUrls);
+                if (!verified.Exists
+                    || !string.Equals(verified.Checksum, expected, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        "MusicBee playlist creation verification failed.");
+                }
+
+                return SynchronizationLifecycleResult.Succeeded(
+                    "MusicBee playlist created and verified.",
+                    verified,
+                    null,
+                    createdUrl);
+            }
+            catch (Exception exception)
+            {
+                return LifecycleFailure(
+                    exception,
+                    () =>
+                    {
+                        if (createdUrl != null && !musicBee.Delete(createdUrl))
+                        {
+                            throw new InvalidOperationException(
+                                "MusicBee rejected creation rollback.");
+                        }
+                    });
+            }
+        }
+
+        public SynchronizationLifecycleResult DeletePhone(
+            string backingName,
+            string expectedChecksum,
+            CancellationToken cancellationToken)
+        {
+            PlaylistState current = phone.Read(backingName);
+            if (!current.Exists
+                || !string.Equals(current.Checksum, expectedChecksum, StringComparison.Ordinal))
+            {
+                return SynchronizationLifecycleResult.Stale(
+                    "The phone playlist changed before deletion.");
+            }
+
+            PlaylistBackup backup = phone.Backup(backingName, Guid.NewGuid());
+            try
+            {
+                phone.Delete(backingName, cancellationToken);
+                if (phone.Read(backingName).Exists)
+                {
+                    throw new InvalidOperationException(
+                        "Phone playlist deletion verification failed.");
+                }
+
+                return SynchronizationLifecycleResult.Succeeded(
+                    "Phone playlist deleted and verified.");
+            }
+            catch (Exception exception)
+            {
+                return LifecycleFailure(exception, () => phone.Restore(backup));
+            }
+        }
+
+        public SynchronizationLifecycleResult DeleteMusicBee(
+            string playlistUrl,
+            string playlistName,
+            string expectedChecksum,
+            CancellationToken cancellationToken)
+        {
+            PlaylistState current = musicBee.Read(playlistUrl);
+            if (!current.Exists
+                || !string.Equals(current.Checksum, expectedChecksum, StringComparison.Ordinal))
+            {
+                return SynchronizationLifecycleResult.Stale(
+                    "The MusicBee playlist changed before deletion.");
+            }
+
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!musicBee.Delete(playlistUrl))
+                {
+                    throw new InvalidOperationException(
+                        "MusicBee rejected playlist deletion.");
+                }
+
+                return SynchronizationLifecycleResult.Succeeded(
+                    "MusicBee playlist deleted.");
+            }
+            catch (Exception exception)
+            {
+                return LifecycleFailure(
+                    exception,
+                    () =>
+                    {
+                        string recreated = musicBee.Create(
+                            playlistName,
+                            current.Entries);
+                        PlaylistState verified = musicBee.Read(recreated);
+                        if (!string.Equals(
+                            verified.Checksum,
+                            current.Checksum,
+                            StringComparison.Ordinal))
+                        {
+                            throw new InvalidOperationException(
+                                "MusicBee recreation verification failed.");
+                        }
+                    });
+            }
+        }
+
+        private static SynchronizationLifecycleResult LifecycleFailure(
+            Exception exception,
+            Action rollback)
+        {
+            string details = exception.Message;
+            try
+            {
+                rollback();
+            }
+            catch (Exception rollbackException)
+            {
+                details += " Rollback error: " + rollbackException.Message;
+            }
+
+            return exception is OperationCanceledException
+                ? SynchronizationLifecycleResult.Cancelled(details)
+                : SynchronizationLifecycleResult.Failed(details);
+        }
+
         private void TryRecordFailure(SynchronizationPlan plan, string details)
         {
             try
@@ -342,6 +532,69 @@ namespace Shmembee.Application.Synchronization
         Stale,
         Cancelled,
         Failed
+    }
+
+    public sealed class SynchronizationLifecycleResult
+    {
+        private SynchronizationLifecycleResult(
+            SynchronizationApplyStatus status,
+            string details,
+            PlaylistState? musicBeeState,
+            PlaylistState? phoneState,
+            string? createdMusicBeePlaylistUrl)
+        {
+            Status = status;
+            Details = details;
+            MusicBeeState = musicBeeState;
+            PhoneState = phoneState;
+            CreatedMusicBeePlaylistUrl = createdMusicBeePlaylistUrl;
+        }
+
+        public SynchronizationApplyStatus Status { get; }
+
+        public string Details { get; }
+
+        public PlaylistState? MusicBeeState { get; }
+
+        public PlaylistState? PhoneState { get; }
+
+        public string? CreatedMusicBeePlaylistUrl { get; }
+
+        public static SynchronizationLifecycleResult Succeeded(
+            string details,
+            PlaylistState? musicBeeState = null,
+            PlaylistState? phoneState = null,
+            string? createdMusicBeePlaylistUrl = null) =>
+            new SynchronizationLifecycleResult(
+                SynchronizationApplyStatus.Succeeded,
+                details,
+                musicBeeState,
+                phoneState,
+                createdMusicBeePlaylistUrl);
+
+        public static SynchronizationLifecycleResult Stale(string details) =>
+            new SynchronizationLifecycleResult(
+                SynchronizationApplyStatus.Stale,
+                details,
+                null,
+                null,
+                null);
+
+        public static SynchronizationLifecycleResult Failed(string details) =>
+            new SynchronizationLifecycleResult(
+                SynchronizationApplyStatus.Failed,
+                details,
+                null,
+                null,
+                null);
+
+        public static SynchronizationLifecycleResult Cancelled(string details) =>
+            new SynchronizationLifecycleResult(
+                SynchronizationApplyStatus.Cancelled,
+                details,
+                null,
+                null,
+                null);
     }
 
     internal sealed class StaleDuringApplyException : Exception

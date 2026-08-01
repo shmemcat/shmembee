@@ -31,11 +31,12 @@ namespace Shmembee.Infrastructure.Persistence
                 {
                     string? musicBeeChecksum = null;
                     string? phoneChecksum = null;
+                    DateTimeOffset? acceptedUtc = null;
                     using (SqliteCommand command = connection.CreateCommand())
                     {
                         command.Transaction = transaction;
                         command.CommandText = @"
-SELECT musicbee_checksum, phone_checksum
+SELECT musicbee_checksum, phone_checksum, accepted_utc
 FROM accepted_sync_baselines
 WHERE playlist_id = $playlistId;";
                         command.Parameters.AddWithValue("$playlistId", playlistId);
@@ -48,6 +49,10 @@ WHERE playlist_id = $playlistId;";
 
                             musicBeeChecksum = reader.GetString(0);
                             phoneChecksum = reader.GetString(1);
+                            acceptedUtc = DateTimeOffset.Parse(
+                                reader.GetString(2),
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.RoundtripKind);
                         }
                     }
 
@@ -76,7 +81,8 @@ ORDER BY position;";
                     var baseline = new AcceptedBaseline(
                         musicBeeChecksum,
                         phoneChecksum,
-                        tracks);
+                        tracks,
+                        acceptedUtc);
                     transaction.Commit();
                     return baseline;
                 }
@@ -89,11 +95,13 @@ ORDER BY position;";
         public AcceptedBaseline(
             string musicBeeChecksum,
             string phoneChecksum,
-            IReadOnlyList<SynchronizationTrack> tracks)
+            IReadOnlyList<SynchronizationTrack> tracks,
+            DateTimeOffset? acceptedUtc = null)
         {
             MusicBeeChecksum = musicBeeChecksum;
             PhoneChecksum = phoneChecksum;
             Tracks = tracks;
+            AcceptedUtc = acceptedUtc;
         }
 
         public string MusicBeeChecksum { get; }
@@ -101,5 +109,7 @@ ORDER BY position;";
         public string PhoneChecksum { get; }
 
         public IReadOnlyList<SynchronizationTrack> Tracks { get; }
+
+        public DateTimeOffset? AcceptedUtc { get; }
     }
 }

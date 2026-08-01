@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using Microsoft.Data.Sqlite;
 using Shmembee.Application.Synchronization;
@@ -187,6 +188,100 @@ VALUES (
             SetTerminalStatus(plan, "commit_pending", details);
         }
 
+        public IReadOnlyList<SynchronizationHistoryListItem> List(
+            int limit = 100,
+            int offset = 0)
+        {
+            if (limit <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(limit));
+            }
+
+            if (offset < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
+            new DatabaseMigrator(databasePath).ApplyPending();
+            var items = new List<SynchronizationHistoryListItem>();
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                using (SqliteCommand command = connection.CreateCommand())
+                {
+                    command.CommandText = @"
+SELECT id, playlist_id, started_utc, completed_utc, status, details
+FROM sync_operations
+ORDER BY started_utc DESC, id DESC
+LIMIT $limit OFFSET $offset;";
+                    command.Parameters.AddWithValue("$limit", limit);
+                    command.Parameters.AddWithValue("$offset", offset);
+                    using (SqliteDataReader reader = command.ExecuteReader())
+                    {
+                        while (reader.Read())
+                        {
+                            items.Add(new SynchronizationHistoryListItem(
+                                Guid.Parse(reader.GetString(0)),
+                                NullableString(reader, 1),
+                                ParseTimestamp(reader.GetString(2)),
+                                NullableTimestamp(reader, 3),
+                                reader.GetString(4),
+                                NullableString(reader, 5)));
+                        }
+                    }
+                }
+            }
+
+            return items;
+        }
+
+        public SynchronizationHistoryDetail? Get(Guid operationId)
+        {
+            new DatabaseMigrator(databasePath).ApplyPending();
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                using (SqliteCommand command = connection.CreateCommand())
+                {
+                    command.CommandText = @"
+SELECT id,
+       playlist_id,
+       started_utc,
+       completed_utc,
+       status,
+       details,
+       phone_backup_location,
+       expected_musicbee_checksum,
+       expected_phone_checksum,
+       verified_musicbee_checksum,
+       verified_phone_checksum
+FROM sync_operations
+WHERE id = $id;";
+                    command.Parameters.AddWithValue("$id", operationId.ToString("D"));
+                    using (SqliteDataReader reader = command.ExecuteReader())
+                    {
+                        if (!reader.Read())
+                        {
+                            return null;
+                        }
+
+                        return new SynchronizationHistoryDetail(
+                            Guid.Parse(reader.GetString(0)),
+                            NullableString(reader, 1),
+                            ParseTimestamp(reader.GetString(2)),
+                            NullableTimestamp(reader, 3),
+                            reader.GetString(4),
+                            NullableString(reader, 5),
+                            NullableString(reader, 6),
+                            NullableString(reader, 7),
+                            NullableString(reader, 8),
+                            NullableString(reader, 9),
+                            NullableString(reader, 10));
+                    }
+                }
+            }
+        }
+
         private void SetTerminalStatus(
             SynchronizationPlan plan,
             string status,
@@ -226,5 +321,92 @@ WHERE id = $id;",
 
         private static string UtcNow() =>
             DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+
+        private static string? NullableString(SqliteDataReader reader, int ordinal) =>
+            reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+
+        private static DateTimeOffset? NullableTimestamp(
+            SqliteDataReader reader,
+            int ordinal) =>
+            reader.IsDBNull(ordinal)
+                ? (DateTimeOffset?)null
+                : ParseTimestamp(reader.GetString(ordinal));
+
+        private static DateTimeOffset ParseTimestamp(string value) =>
+            DateTimeOffset.Parse(
+                value,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind);
+    }
+
+    public class SynchronizationHistoryListItem
+    {
+        public SynchronizationHistoryListItem(
+            Guid operationId,
+            string? playlistId,
+            DateTimeOffset startedUtc,
+            DateTimeOffset? completedUtc,
+            string status,
+            string? details)
+        {
+            OperationId = operationId;
+            PlaylistId = playlistId;
+            StartedUtc = startedUtc;
+            CompletedUtc = completedUtc;
+            Status = status;
+            Details = details;
+        }
+
+        public Guid OperationId { get; }
+
+        public string? PlaylistId { get; }
+
+        public DateTimeOffset StartedUtc { get; }
+
+        public DateTimeOffset? CompletedUtc { get; }
+
+        public string Status { get; }
+
+        public string? Details { get; }
+    }
+
+    public sealed class SynchronizationHistoryDetail : SynchronizationHistoryListItem
+    {
+        public SynchronizationHistoryDetail(
+            Guid operationId,
+            string? playlistId,
+            DateTimeOffset startedUtc,
+            DateTimeOffset? completedUtc,
+            string status,
+            string? details,
+            string? phoneBackupLocation,
+            string? expectedMusicBeeChecksum,
+            string? expectedPhoneChecksum,
+            string? verifiedMusicBeeChecksum,
+            string? verifiedPhoneChecksum)
+            : base(
+                operationId,
+                playlistId,
+                startedUtc,
+                completedUtc,
+                status,
+                details)
+        {
+            PhoneBackupLocation = phoneBackupLocation;
+            ExpectedMusicBeeChecksum = expectedMusicBeeChecksum;
+            ExpectedPhoneChecksum = expectedPhoneChecksum;
+            VerifiedMusicBeeChecksum = verifiedMusicBeeChecksum;
+            VerifiedPhoneChecksum = verifiedPhoneChecksum;
+        }
+
+        public string? PhoneBackupLocation { get; }
+
+        public string? ExpectedMusicBeeChecksum { get; }
+
+        public string? ExpectedPhoneChecksum { get; }
+
+        public string? VerifiedMusicBeeChecksum { get; }
+
+        public string? VerifiedPhoneChecksum { get; }
     }
 }

@@ -28,7 +28,11 @@ namespace MusicBeePlugin
                     file,
                     GetTag(file, Plugin.MetaDataType.Artist),
                     GetTag(file, Plugin.MetaDataType.TrackTitle),
-                    ParseDuration(GetProperty(file, Plugin.FilePropertyType.Duration))))
+                    ParseDuration(GetProperty(file, Plugin.FilePropertyType.Duration)),
+                    GetTag(file, Plugin.MetaDataType.AlbumArtist),
+                    GetTag(file, Plugin.MetaDataType.Album),
+                    ParseNumber(GetTag(file, Plugin.MetaDataType.DiscNo)),
+                    ParseNumber(GetTag(file, Plugin.MetaDataType.TrackNo))))
                 .ToList();
         }
 
@@ -76,6 +80,18 @@ namespace MusicBeePlugin
         {
             int duration;
             return int.TryParse(value, out duration) ? duration : (int?)null;
+        }
+
+        private static int? ParseNumber(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            string firstPart = value!.Split('/')[0].Trim();
+            int number;
+            return int.TryParse(firstPart, out number) ? number : (int?)null;
         }
     }
 }

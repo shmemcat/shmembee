@@ -58,6 +58,9 @@ namespace Shmembee.WpdSidecar
                         case "probe":
                             Probe(session, response.FolderId, request.Name, response);
                             break;
+                        case "snapshot-playlists":
+                            SnapshotPlaylists(session, response.FolderId, response);
+                            break;
                         case "read":
                             Read(session, response.FolderId, request.Name, response);
                             break;
@@ -115,6 +118,40 @@ namespace Shmembee.WpdSidecar
             response.ContentBase64 = Convert.ToBase64String(bytes);
             response.Sha256 = Hash(bytes);
             response.ByteCount = bytes.Length;
+        }
+
+        private void SnapshotPlaylists(
+            WpdSession session,
+            string folderId,
+            OperationResponse response)
+        {
+            stage = "snapshot-playlists";
+            var playlists = new List<PlaylistContentResponse>();
+            foreach (string objectId in session.Children(folderId))
+            {
+                string name = session.Name(objectId);
+                string extension = Path.GetExtension(name);
+                if (!string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal)
+                    || (!string.Equals(extension, ".m3u", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(
+                            extension,
+                            ".m3u8",
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                byte[] bytes = ReadById(session, objectId);
+                playlists.Add(new PlaylistContentResponse
+                {
+                    ObjectId = objectId,
+                    Name = name,
+                    ContentBase64 = Convert.ToBase64String(bytes),
+                    ByteCount = bytes.Length
+                });
+            }
+
+            response.Playlists = playlists.ToArray();
         }
 
         private void Replace(WpdSession session, string folderId, string name,
@@ -280,7 +317,9 @@ namespace Shmembee.WpdSidecar
                 throw new ArgumentException("Device is required.");
             if (string.IsNullOrWhiteSpace(request.Storage))
                 throw new ArgumentException("Storage is required.");
-            if (request.Operation != "probe" && string.IsNullOrWhiteSpace(request.Name))
+            if (request.Operation != "probe"
+                && request.Operation != "snapshot-playlists"
+                && string.IsNullOrWhiteSpace(request.Name))
                 throw new ArgumentException("Name is required.");
             if (request.Operation == "replace" && request.ContentBase64 == null)
                 throw new ArgumentException("ContentBase64 is required.");

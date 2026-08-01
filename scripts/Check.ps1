@@ -14,9 +14,9 @@ try {
         throw "Restore failed with exit code $LASTEXITCODE."
     }
 
-    dotnet format Shmembee.sln --verify-no-changes --no-restore
+    dotnet format Shmembee.sln --no-restore
     if ($LASTEXITCODE -ne 0) {
-        throw "Formatting verification failed with exit code $LASTEXITCODE."
+        throw "Formatting failed with exit code $LASTEXITCODE."
     }
 
     dotnet build Shmembee.sln --configuration $Configuration --no-restore

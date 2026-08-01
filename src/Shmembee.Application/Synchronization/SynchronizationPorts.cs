@@ -9,6 +9,10 @@ namespace Shmembee.Application.Synchronization
         PlaylistState Read(string playlistUrl);
 
         bool Replace(string playlistUrl, IReadOnlyList<string> canonicalUrls);
+
+        string Create(string playlistName, IReadOnlyList<string> canonicalUrls);
+
+        bool Delete(string playlistUrl);
     }
 
     public interface IPhonePlaylistWriter
@@ -21,6 +25,8 @@ namespace Shmembee.Application.Synchronization
             string backingName,
             IReadOnlyList<string> phonePaths,
             CancellationToken cancellationToken);
+
+        void Delete(string backingName, CancellationToken cancellationToken);
 
         void Restore(PlaylistBackup backup);
     }

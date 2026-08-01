@@ -9,7 +9,10 @@ namespace Shmembee.WpdSidecar
     {
         private static int Main()
         {
-            var json = new JavaScriptSerializer();
+            var json = new JavaScriptSerializer
+            {
+                MaxJsonLength = 64 * 1024 * 1024
+            };
             OperationResponse response;
             try
             {
@@ -63,6 +66,7 @@ namespace Shmembee.WpdSidecar
         public int? ByteCount { get; set; }
         public bool? RenameSupported { get; set; }
         public string[] Objects { get; set; }
+        public PlaylistContentResponse[] Playlists { get; set; }
 
         public static OperationResponse Failure(
             string operationId,
@@ -76,5 +80,13 @@ namespace Shmembee.WpdSidecar
                 Error = error,
                 HResult = hresult,
             };
+    }
+
+    public sealed class PlaylistContentResponse
+    {
+        public string ObjectId { get; set; }
+        public string Name { get; set; }
+        public string ContentBase64 { get; set; }
+        public int ByteCount { get; set; }
     }
 }

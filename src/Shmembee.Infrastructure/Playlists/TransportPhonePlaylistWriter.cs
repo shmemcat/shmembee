@@ -37,6 +37,16 @@ namespace Shmembee.Infrastructure.Playlists
                 return State(exists: false, Array.Empty<string>());
             }
 
+            return Parse(backingName, content);
+        }
+
+        public PlaylistState Parse(string backingName, byte[] content)
+        {
+            if (content == null)
+            {
+                throw new ArgumentNullException(nameof(content));
+            }
+
             using (var stream = new MemoryStream(content, writable: false))
             {
                 ParsedPlaylist parsed = parser.Parse(stream, backingName, backingName);
@@ -72,6 +82,12 @@ namespace Shmembee.Infrastructure.Playlists
             byte[] content = writer.Write(phonePaths);
             cancellationToken.ThrowIfCancellationRequested();
             transport.Replace(backingName, content);
+        }
+
+        public void Delete(string backingName, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            transport.Delete(backingName);
         }
 
         public void Restore(PlaylistBackup backup)

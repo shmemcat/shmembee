@@ -1,5 +1,6 @@
 #nullable disable
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.Serialization.Json;
@@ -8,7 +9,10 @@ using Shmembee.Application.Ports;
 
 namespace Shmembee.Windows
 {
-    public sealed class WpdSidecarPlaylistTransport : IPlaylistFileTransport
+    public sealed class WpdSidecarPlaylistTransport :
+        IPlaylistFileTransport,
+        IPhonePlaylistCatalogReader,
+        IPhonePlaylistSnapshotReader
     {
         private readonly string sidecarPath;
         private readonly string deviceName;
@@ -41,6 +45,21 @@ namespace Shmembee.Windows
         public WpdSidecarResponse Probe()
         {
             return Invoke("probe", null, null, false);
+        }
+
+        public IReadOnlyList<PhonePlaylistFile> ListPlaylists()
+        {
+            return Probe().EnumeratePlaylists();
+        }
+
+        public IReadOnlyList<PhonePlaylistContent> ReadPlaylistSnapshot()
+        {
+            WpdSidecarResponse response = Invoke(
+                "snapshot-playlists",
+                null,
+                null,
+                false);
+            return response.DecodePlaylistSnapshot();
         }
 
         public byte[] Read(string backingName)
@@ -313,7 +332,7 @@ namespace Shmembee.Windows
 
     public sealed class WpdSidecarProcessRunner : IWpdSidecarProcessRunner
     {
-        private const int MaximumOutputCharacters = 1024 * 1024;
+        private const int MaximumOutputCharacters = 64 * 1024 * 1024;
 
         public WpdSidecarProcessResult Run(
             string executablePath,
@@ -418,5 +437,119 @@ namespace Shmembee.Windows
         public string OriginalObjectId { get; set; }
         public string CandidateObjectId { get; set; }
         public string CandidateName { get; set; }
+        public string DeviceId { get; set; }
+        public string StorageId { get; set; }
+        public string FolderId { get; set; }
+        public string ObjectId { get; set; }
+        public string Sha256 { get; set; }
+        public int? ByteCount { get; set; }
+        public bool? RenameSupported { get; set; }
+        public string[] Objects { get; set; }
+        public WpdSidecarPlaylistContent[] Playlists { get; set; }
+
+        public IReadOnlyList<PhonePlaylistFile> EnumeratePlaylists()
+        {
+            var result = new List<PhonePlaylistFile>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (Objects == null)
+            {
+                return result;
+            }
+
+            foreach (string value in Objects)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                int separator = value.IndexOf('|');
+                if (separator <= 0 || separator == value.Length - 1)
+                {
+                    continue;
+                }
+
+                string objectId = value.Substring(0, separator).Trim();
+                string name = value.Substring(separator + 1);
+                name = name.Trim();
+                string extension = Path.GetExtension(name);
+                if (objectId.Length > 0
+                    && string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal)
+                    && (string.Equals(extension, ".m3u", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(extension, ".m3u8", StringComparison.OrdinalIgnoreCase))
+                    && seen.Add(name))
+                {
+                    result.Add(new PhonePlaylistFile(objectId, name));
+                }
+            }
+
+            return result;
+        }
+
+        public IReadOnlyList<string> EnumeratePlaylistNames()
+        {
+            var result = new List<string>();
+            foreach (PhonePlaylistFile playlist in EnumeratePlaylists())
+            {
+                result.Add(playlist.BackingName);
+            }
+
+            return result;
+        }
+
+        public IReadOnlyList<PhonePlaylistContent> DecodePlaylistSnapshot()
+        {
+            var result = new List<PhonePlaylistContent>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (WpdSidecarPlaylistContent playlist in
+                Playlists ?? Array.Empty<WpdSidecarPlaylistContent>())
+            {
+                if (playlist == null
+                    || string.IsNullOrWhiteSpace(playlist.ObjectId)
+                    || string.IsNullOrWhiteSpace(playlist.Name)
+                    || !seen.Add(playlist.Name))
+                {
+                    continue;
+                }
+
+                string extension = Path.GetExtension(playlist.Name);
+                if (!string.Equals(
+                        Path.GetFileName(playlist.Name),
+                        playlist.Name,
+                        StringComparison.Ordinal)
+                    || (!string.Equals(extension, ".m3u", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(
+                            extension,
+                            ".m3u8",
+                            StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    result.Add(new PhonePlaylistContent(
+                        playlist.ObjectId,
+                        playlist.Name,
+                        Convert.FromBase64String(playlist.ContentBase64 ?? string.Empty)));
+                }
+                catch (FormatException exception)
+                {
+                    throw new IOException(
+                        "The WPD sidecar returned invalid playlist content.",
+                        exception);
+                }
+            }
+
+            return result;
+        }
+    }
+
+    public sealed class WpdSidecarPlaylistContent
+    {
+        public string ObjectId { get; set; }
+        public string Name { get; set; }
+        public string ContentBase64 { get; set; }
+        public int ByteCount { get; set; }
     }
 }

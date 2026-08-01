@@ -79,6 +79,315 @@ public sealed class Phase2Tests
     }
 
     [Fact]
+    public void ResolverMatchesPhoneTemplateMetadataUsingAlbumArtistAndAlbum()
+    {
+        var expected = new LibraryTrack(
+            "expected",
+            @"D:\Music\Featured Artist\Album\08 Featured Artist - Song.mp3",
+            artist: "Featured Artist",
+            title: "Song",
+            albumArtist: "Various Artists",
+            album: "Album");
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Various Artists/Album/1-08 - Song.mp3",
+                title: "Song",
+                albumArtist: "Various Artists",
+                album: "Album"),
+            new[]
+            {
+                expected,
+                new LibraryTrack(
+                    "other",
+                    @"D:\Music\Other\Other Album\08 Other - Song.mp3",
+                    artist: "Other",
+                    title: "Song",
+                    albumArtist: "Other",
+                    album: "Other Album")
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Equal(MatchConfidence.PhoneTemplateMetadata, result.Confidence);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverBlocksAmbiguousPhoneTemplateMetadata()
+    {
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Artist/Album/# - Song.mp3",
+                title: "Song",
+                albumArtist: "Artist",
+                album: "Album"),
+            new[]
+            {
+                new LibraryTrack(
+                    "first",
+                    @"D:\First.mp3",
+                    title: "Song",
+                    albumArtist: "Artist",
+                    album: "Album"),
+                new LibraryTrack(
+                    "second",
+                    @"D:\Second.mp3",
+                    title: "Song",
+                    albumArtist: "Artist",
+                    album: "Album")
+            });
+
+        Assert.Equal(ResolutionStatus.Ambiguous, result.Status);
+        Assert.Equal(2, result.Candidates.Count);
+    }
+
+    [Theory]
+    [InlineData(
+        "Do I Wanna Know ",
+        "Do I Wanna Know?",
+        "AM",
+        "AM",
+        "Arctic Monkeys",
+        "Arctic Monkeys")]
+    [InlineData(
+        "Somethinggreater",
+        "Somethinggreater",
+        "Day Night",
+        "Day/Night",
+        "Parcels",
+        "Parcels")]
+    [InlineData(
+        "Better Place (From TROLLS Band Together)",
+        "Better Place (From TROLLS Band Together)",
+        "Better Place (From TROLLS Band Together)",
+        "Better Place (From TROLLS Band Together)",
+        "nsync",
+        "*NSYNC")]
+    public void ResolverMatchesFilesystemSafePhoneMetadata(
+        string phoneTitle,
+        string libraryTitle,
+        string phoneAlbum,
+        string libraryAlbum,
+        string phoneAlbumArtist,
+        string libraryAlbumArtist)
+    {
+        var expected = new LibraryTrack(
+            "expected",
+            @"D:\Music\Track.mp3",
+            title: libraryTitle,
+            albumArtist: libraryAlbumArtist,
+            album: libraryAlbum);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/phone/path.mp3",
+                title: phoneTitle,
+                albumArtist: phoneAlbumArtist,
+                album: phoneAlbum),
+            new[] { expected });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Equal(MatchConfidence.PhoneTemplateMetadata, result.Confidence);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverUsesDiscAndTrackNumbersToDisambiguateMetadata()
+    {
+        var expected = new LibraryTrack(
+            "expected",
+            @"D:\Music\Disc 1\01 Song.mp3",
+            title: "Song",
+            albumArtist: "Artist",
+            album: "Album",
+            discNumber: 1,
+            trackNumber: 1);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Artist/Album/1-01 - Song.mp3",
+                title: "Song",
+                albumArtist: "Artist",
+                album: "Album",
+                discNumber: 1,
+                trackNumber: 1),
+            new[]
+            {
+                expected,
+                new LibraryTrack(
+                    "other",
+                    @"D:\Music\Disc 2\01 Song.mp3",
+                    title: "Song",
+                    albumArtist: "Artist",
+                    album: "Album",
+                    discNumber: 2,
+                    trackNumber: 1)
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverIndexCanBeReusedAcrossReferences()
+    {
+        var first = new LibraryTrack(
+            "first",
+            @"D:\Music\Artist\Album\First.mp3",
+            phoneAliases: new[] { "Music/Artist/Album/First.mp3" });
+        var second = new LibraryTrack(
+            "second",
+            @"D:\Music\Artist\Album\Second.mp3");
+        TrackResolverIndex index = new TrackResolver().CreateIndex(
+            new[] { first, second });
+
+        ResolutionResult alias = index.Resolve(
+            new TrackReference("Music/Artist/Album/First.mp3"));
+        ResolutionResult suffix = index.Resolve(
+            new TrackReference("Artist/Album/Second.mp3"));
+
+        Assert.Same(first, alias.Match);
+        Assert.Equal(MatchConfidence.ExpectedPhonePath, alias.Confidence);
+        Assert.Same(second, suffix.Match);
+        Assert.Equal(MatchConfidence.UniquePathSuffix, suffix.Confidence);
+    }
+
+    [Fact]
+    public void ResolverTreatsDuplicateLibraryRowsForSameFileAsOneCandidate()
+    {
+        var first = new LibraryTrack(
+            "first",
+            @"D:\Music\Artist\Album\Song.mp3",
+            title: "Song",
+            albumArtist: "Artist",
+            album: "Album");
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Artist/Album/# - Song.mp3",
+                title: "Song",
+                albumArtist: "Artist",
+                album: "Album"),
+            new[]
+            {
+                first,
+                new LibraryTrack(
+                    "duplicate",
+                    @"d:/music/artist/album/song.mp3",
+                    title: "Song",
+                    albumArtist: "Artist",
+                    album: "Album")
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(first, result.Match);
+    }
+
+    [Fact]
+    public void ResolverPrefersExactTitleWithinPunctuationNormalizedCandidates()
+    {
+        var exact = new LibraryTrack(
+            "exact",
+            @"D:\Music\Escapism single.mp3",
+            title: "Escapism.",
+            albumArtist: "RAYE",
+            album: "Escapism. The Thrill Is Gone",
+            trackNumber: 1);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/RAYE/Escapism. The Thrill Is Gone/01 - Escapism..mp3",
+                title: "Escapism.",
+                albumArtist: "RAYE",
+                album: "Escapism. The Thrill Is Gone",
+                trackNumber: 1),
+            new[]
+            {
+                exact,
+                new LibraryTrack(
+                    "punctuation-variant",
+                    @"D:\Music\Escapism album.mp3",
+                    title: "Escapism",
+                    albumArtist: "RAYE",
+                    album: "Escapism. The Thrill Is Gone",
+                    trackNumber: 1)
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(exact, result.Match);
+    }
+
+    [Fact]
+    public void ResolverPrefersExactAlbumWithinNormalizedCandidates()
+    {
+        var exact = new LibraryTrack(
+            "exact",
+            @"D:\Music\High School Musical 2\01 Song.mp3",
+            title: "What Time Is It",
+            albumArtist: "Various Artists",
+            album: "High School Musical 2",
+            trackNumber: 1);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Various Artists/High School Musical 2/01 - What Time Is It.mp3",
+                title: "What Time Is It",
+                albumArtist: "Various Artists",
+                album: "High School Musical 2",
+                trackNumber: 1),
+            new[]
+            {
+                exact,
+                new LibraryTrack(
+                    "punctuation-variant",
+                    @"D:\Music\High School Musical II\01 Song.mp3",
+                    title: "What Time Is It",
+                    albumArtist: "Various Artists",
+                    album: "High-School Musical 2",
+                    trackNumber: 1)
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(exact, result.Match);
+    }
+
+    [Fact]
+    public void ResolverUsesPairedPlaylistMembershipToBreakMetadataTie()
+    {
+        var expected = new LibraryTrack(
+            "expected",
+            @"D:\Music\Playlist version.mp3",
+            title: "G.D.S.",
+            albumArtist: "DIR EN GREY",
+            album: "朔-saku-",
+            discNumber: 1,
+            trackNumber: 3);
+        var duplicate = new LibraryTrack(
+            "duplicate",
+            @"D:\Music\Other version.mp3",
+            title: "G.D.S.",
+            albumArtist: "DIR EN GREY",
+            album: "朔-saku-",
+            discNumber: 1,
+            trackNumber: 3);
+        TrackResolverIndex resolver = new TrackResolver().CreateIndex(
+            new[] { expected, duplicate });
+
+        ResolutionResult result = resolver.Resolve(
+            new TrackReference(
+                "Music/DIR EN GREY/朔-saku-/1-03 - G.D.S..mp3",
+                title: "G.D.S.",
+                albumArtist: "DIR EN GREY",
+                album: "朔-saku-",
+                discNumber: 1,
+                trackNumber: 3),
+            preferredUrls: new[] { expected.Url });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
     public void ThreeWayReconcilerAcceptsOneSidedAndSameChanges()
     {
         Guid playlistId = Guid.NewGuid();

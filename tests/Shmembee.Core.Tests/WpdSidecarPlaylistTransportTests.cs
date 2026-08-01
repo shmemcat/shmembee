@@ -124,6 +124,115 @@ public sealed class WpdSidecarPlaylistTransportTests
         Assert.Equal(1, runner.CallCount);
     }
 
+    [Fact]
+    public void ProbeRetainsMetadataAndSafelyEnumeratesPlaylistNames()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            string operationId = document.RootElement
+                .GetProperty("OperationId")
+                .GetString()!;
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = operationId,
+                    DeviceId = "device-id",
+                    StorageId = "storage-id",
+                    FolderId = "folder-id",
+                    ObjectId = "object-id",
+                    Sha256 = "abc",
+                    ByteCount = 42,
+                    RenameSupported = true,
+                    Objects = new[]
+                    {
+                        "1|Road.m3u",
+                        "2|Mix.M3U8",
+                        "3|notes.txt",
+                        "4|../unsafe.m3u",
+                        "5|road.m3u",
+                        "malformed.m3u8"
+                    }
+                }),
+                string.Empty);
+        });
+
+        WpdSidecarResponse response = CreateTransport(runner).Probe();
+
+        Assert.Equal("device-id", response.DeviceId);
+        Assert.Equal("storage-id", response.StorageId);
+        Assert.Equal("folder-id", response.FolderId);
+        Assert.Equal("object-id", response.ObjectId);
+        Assert.Equal("abc", response.Sha256);
+        Assert.Equal(42, response.ByteCount);
+        Assert.True(response.RenameSupported);
+        Assert.Equal(
+            new[] { "Road.m3u", "Mix.M3U8" },
+            response.EnumeratePlaylistNames());
+        Assert.Collection(
+            response.EnumeratePlaylists(),
+            playlist =>
+            {
+                Assert.Equal("1", playlist.Id);
+                Assert.Equal("Road.m3u", playlist.BackingName);
+                Assert.Equal("Road", playlist.DisplayName);
+            },
+            playlist =>
+            {
+                Assert.Equal("2", playlist.Id);
+                Assert.Equal("Mix.M3U8", playlist.BackingName);
+                Assert.Equal("Mix", playlist.DisplayName);
+            });
+    }
+
+    [Fact]
+    public void PlaylistSnapshotReadsAllContentsWithOneProcess()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            JsonElement root = document.RootElement;
+            Assert.Equal(
+                "snapshot-playlists",
+                root.GetProperty("Operation").GetString());
+            string operationId = root.GetProperty("OperationId").GetString()!;
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = operationId,
+                    Playlists = new[]
+                    {
+                        new { ObjectId = "one", Name = "One.m3u", ContentBase64 = "AQI=" },
+                        new { ObjectId = "two", Name = "Two.m3u8", ContentBase64 = "Aw==" }
+                    }
+                }),
+                string.Empty);
+        });
+
+        IReadOnlyList<Shmembee.Application.Ports.PhonePlaylistContent> result =
+            CreateTransport(runner).ReadPlaylistSnapshot();
+
+        Assert.Equal(1, runner.CallCount);
+        Assert.Collection(
+            result,
+            item =>
+            {
+                Assert.Equal("one", item.Id);
+                Assert.Equal("One.m3u", item.BackingName);
+                Assert.Equal(new byte[] { 1, 2 }, item.Content);
+            },
+            item =>
+            {
+                Assert.Equal("two", item.Id);
+                Assert.Equal("Two.m3u8", item.BackingName);
+                Assert.Equal(new byte[] { 3 }, item.Content);
+            });
+    }
+
     [Theory]
     [InlineData("../playlist.m3u")]
     [InlineData("folder/playlist.m3u")]

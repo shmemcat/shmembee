@@ -162,6 +162,64 @@ public sealed class Phase3Tests : IDisposable
     }
 
     [Fact]
+    public void LifecycleCreatePhoneAllowsEmptyWithoutDeletingFile()
+    {
+        var musicBee = new MemoryMusicBee();
+        var phone = new MemoryPhone { State = CreateState(Array.Empty<string>(), exists: false) };
+        var history = new MemoryHistory();
+
+        SynchronizationLifecycleResult result = new SynchronizationCoordinator(
+            musicBee,
+            phone,
+            history).CreatePhone(
+                "Fixture.m3u",
+                phone.State.Checksum,
+                Array.Empty<string>(),
+                CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.Succeeded, result.Status);
+        Assert.True(phone.State.Exists);
+        Assert.Empty(phone.State.Entries);
+        Assert.Equal(0, phone.DeleteCount);
+    }
+
+    [Fact]
+    public void LifecycleDeletePhoneRejectsStaleChecksum()
+    {
+        var phone = new MemoryPhone("old");
+
+        SynchronizationLifecycleResult result = new SynchronizationCoordinator(
+            new MemoryMusicBee(),
+            phone,
+            new MemoryHistory()).DeletePhone(
+                "Fixture.m3u",
+                PlaylistChecksum.Compute(new[] { "different" }),
+                CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.Stale, result.Status);
+        Assert.True(phone.State.Exists);
+        Assert.Equal(0, phone.DeleteCount);
+    }
+
+    [Fact]
+    public void LifecycleDeletePhoneRestoresBackupWhenVerificationFails()
+    {
+        var phone = new MemoryPhone("old") { IgnoreDelete = true };
+
+        SynchronizationLifecycleResult result = new SynchronizationCoordinator(
+            new MemoryMusicBee(),
+            phone,
+            new MemoryHistory()).DeletePhone(
+                "Fixture.m3u",
+                phone.State.Checksum,
+                CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.Failed, result.Status);
+        Assert.Equal(new[] { "old" }, phone.State.Entries);
+        Assert.Equal(1, phone.RestoreCount);
+    }
+
+    [Fact]
     public void FileWriterBacksUpReplacesAndRestores()
     {
         string playlists = Path.Combine(temporaryDirectory, "playlists");
@@ -257,7 +315,7 @@ public sealed class Phase3Tests : IDisposable
             State = CreateState(entries, exists: true);
         }
 
-        public PlaylistState State { get; private set; }
+        public PlaylistState State { get; set; }
 
         public int ReplaceCount { get; private set; }
 
@@ -273,6 +331,18 @@ public sealed class Phase3Tests : IDisposable
             RejectAfterMutation = false;
             return accepted;
         }
+
+        public string Create(string playlistName, IReadOnlyList<string> canonicalUrls)
+        {
+            State = CreateState(canonicalUrls);
+            return "created-playlist-url";
+        }
+
+        public bool Delete(string playlistUrl)
+        {
+            State = CreateState(Array.Empty<string>(), exists: false);
+            return true;
+        }
     }
 
     private sealed class MemoryPhone : IPhonePlaylistWriter
@@ -286,17 +356,21 @@ public sealed class Phase3Tests : IDisposable
             State = CreateState(entries, exists: true);
         }
 
-        public PlaylistState State { get; private set; }
+        public PlaylistState State { get; set; }
 
         public bool FailReplace { get; set; }
 
         public bool DropReplacement { get; set; }
+
+        public bool IgnoreDelete { get; set; }
 
         public Action? BeforeReplace { get; set; }
 
         public int ReplaceCount { get; private set; }
 
         public int RestoreCount { get; private set; }
+
+        public int DeleteCount { get; private set; }
 
         public PlaylistState Read(string backingName) => State;
 
@@ -328,6 +402,16 @@ public sealed class Phase3Tests : IDisposable
         {
             RestoreCount++;
             State = backup;
+        }
+
+        public void Delete(string backingName, CancellationToken cancellationToken)
+        {
+            DeleteCount++;
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IgnoreDelete)
+            {
+                State = CreateState(Array.Empty<string>(), exists: false);
+            }
         }
     }
 
