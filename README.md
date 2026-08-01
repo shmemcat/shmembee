@@ -1,6 +1,6 @@
 # Shmembee
 
-Shmembee is a Windows-first MusicBee plugin for safe, bidirectional playlist
+Shmembee is a vibe-coded Windows-first MusicBee plugin for safe, bidirectional playlist
 reconciliation between MusicBee and GoneMAD M3U/M3U8 playlists.
 
 The repository is currently at its foundation stage. It contains the project
