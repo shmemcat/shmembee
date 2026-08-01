@@ -58,8 +58,36 @@ The installed MusicBee executable is normally under:
 C:\Program Files (x86)\MusicBee\MusicBee.exe
 ```
 
-Do not copy the current placeholder DLL into MusicBee yet. The next proof gate
-must add the official MusicBee API interface, implement its lifecycle contract,
-deploy to a configurable plugin directory, and test startup and shutdown using
-a disposable setup. MusicBee plugin behavior cannot be established by a clean
-build alone.
+The plugin host now includes the official MusicBee API interface and a minimal
+lifecycle implementation. Close MusicBee, then deploy the Release build:
+
+```powershell
+.\scripts\Deploy-MusicBeePlugin.ps1
+```
+
+Start MusicBee and confirm Shmembee appears in Preferences > Plugins. Close
+MusicBee normally, then inspect `Shmembee\lifecycle.log` under MusicBee's
+persistent storage directory. A successful proof contains both `Initialise`
+and `Close` entries.
+
+The initial host proof passed on MusicBee 3.7.9704 (API revision 58) using the
+current .NET Framework 4.8, x86 build. MusicBee 3.4 discovered the assembly and
+called `Initialise`, but its API revision 55 was below the official interface's
+declared minimum revision 57, so MusicBee must be updated before further plugin
+development or testing.
+
+The missing-track repair proof also passed: MusicBee imported a disposable M3U8
+entry using the nonexistent phone-style path
+`Music/ShmembeeFixture/05 Dreamcatcher - Alldaylong.mp3`. The plugin replaced it
+through `Playlist_SetFiles` with the canonical indexed library URL
+`D:\Music\Dreamcatcher\[Summer Holiday]\05 Dreamcatcher - Alldaylong.mp3`,
+re-read the playlist successfully, and MusicBee recognized and played the track.
+
+Remove the proof plugin while MusicBee is closed:
+
+```powershell
+.\scripts\Remove-MusicBeePlugin.ps1
+```
+
+Both scripts accept `-MusicBeePath` for portable or nonstandard installations.
+MusicBee plugin behavior cannot be established by a clean build alone.

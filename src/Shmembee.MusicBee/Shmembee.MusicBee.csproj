@@ -8,13 +8,15 @@
 
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
     <PlatformTarget>x86</PlatformTarget>
     <Platforms>x86</Platforms>
     <AssemblyName>MB_Shmembee</AssemblyName>
     <RootNamespace>MusicBeePlugin</RootNamespace>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <!-- MusicBee requires the MB_ filename prefix. -->
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <NoWarn>$(NoWarn);CA1707;CS0649;CS8618</NoWarn>
   </PropertyGroup>
 
 </Project>

@@ -21,3 +21,7 @@ dotnet_style_qualification_for_property = false:suggestion
 dotnet_style_qualification_for_method = false:suggestion
 dotnet_style_qualification_for_event = false:suggestion
 csharp_style_namespace_declarations = file_scoped:suggestion
+
+[MusicBeeInterface.cs]
+# Preserve the official host ABI and naming exactly as published by MusicBee.
+dotnet_analyzer_diagnostic.severity = none

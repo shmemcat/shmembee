@@ -3,9 +3,9 @@
 Shmembee is a vibe-coded Windows-first MusicBee plugin for safe, bidirectional playlist
 reconciliation between MusicBee and GoneMAD M3U/M3U8 playlists.
 
-The repository is currently at its foundation stage. It contains the project
-boundaries and a buildable `MB_Shmembee.dll` placeholder, but it does not yet
-read or modify MusicBee playlists or phone files.
+The repository is currently at its contract-spike stage. It contains the
+project boundaries and a minimal `MB_Shmembee.dll` lifecycle plugin, but it
+does not yet modify MusicBee playlists or phone files.
 
 ## Architecture
 
@@ -41,9 +41,10 @@ src/Shmembee.MusicBee/bin/Release/net48/MB_Shmembee.dll
 
 MusicBee documents managed plugins as .NET Framework, 32-bit assemblies named
 `MB_*.dll`. The host project therefore targets .NET Framework 4.8 and x86.
-Successful compilation is not proof that MusicBee can load the plugin. The next
-product gate will vendor the official API interface and validate a minimal
-startup/shutdown cycle in MusicBee.
+The official API interface is vendored in the host project. Successful
+compilation is not proof that MusicBee can load the plugin; follow
+[the development setup](docs/development-setup.md) to deploy it and validate a
+minimal startup/shutdown cycle.
 
 ## License
 
