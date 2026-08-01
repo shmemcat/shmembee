@@ -1,6 +1,6 @@
 using Microsoft.Data.Sqlite;
-using Shmembee.Application.Synchronization;
 using Shmembee.Application.Ports;
+using Shmembee.Application.Synchronization;
 using Shmembee.Infrastructure.Diagnostics;
 using Shmembee.Infrastructure.Persistence;
 using Shmembee.Infrastructure.Playlists;
