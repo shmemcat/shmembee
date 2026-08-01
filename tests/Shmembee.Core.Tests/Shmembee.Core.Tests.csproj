@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <NoWarn>$(NoWarn);CA1861</NoWarn>
+    <NoWarn>$(NoWarn);CA1510;CA1861</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +22,11 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Shmembee.Core\Shmembee.Core.csproj" />
     <ProjectReference Include="..\..\src\Shmembee.Infrastructure\Shmembee.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\Shmembee.Windows\WpdSidecarPlaylistTransport.cs"
+             Link="Windows\WpdSidecarPlaylistTransport.cs" />
   </ItemGroup>
 
 </Project>

@@ -34,10 +34,16 @@ namespace MusicBeePlugin
         {
             libraryReader = new MusicBeeLibraryReader(api);
             musicBeeWriter = new MusicBeePlaylistWriter(api);
-            var transport = new ShellPortableDevicePlaylistTransport(
+            var transport = new WpdSidecarPlaylistTransport(
+                System.IO.Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory,
+                    "Plugins",
+                    "Shmembee.WpdSidecar",
+                    "Shmembee.WpdSidecar.exe"),
                 "MLE S24U",
                 "Internal storage",
-                "gmmp/playlists");
+                "gmmp/playlists",
+                TimeSpan.FromMinutes(5));
             phoneWriter = new TransportPhonePlaylistWriter(
                 transport,
                 System.IO.Path.Combine(storagePath, "backups"));
@@ -210,8 +216,8 @@ namespace MusicBeePlugin
             if (!RealApplyEnabled)
             {
                 throw new InvalidOperationException(
-                    "Real apply is disabled because Windows Shell MTP replacement "
-                        + "did not provide reliable promotion and rollback guarantees.");
+                    "Real apply is disabled until Test-WpdPlaylistTransport.ps1 "
+                        + "passes on the target device and the probe result is reviewed.");
             }
 
             if (preview.Reconciliation == null)

@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shmembee.MusicBee", "src\Sh
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shmembee.Core.Tests", "tests\Shmembee.Core.Tests\Shmembee.Core.Tests.csproj", "{A6C0322E-756F-46A5-B90F-79A9DF480280}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shmembee.WpdSidecar", "src\Shmembee.WpdSidecar\Shmembee.WpdSidecar.csproj", "{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -99,6 +101,18 @@ Global
 		{A6C0322E-756F-46A5-B90F-79A9DF480280}.Release|x64.Build.0 = Release|Any CPU
 		{A6C0322E-756F-46A5-B90F-79A9DF480280}.Release|x86.ActiveCfg = Release|Any CPU
 		{A6C0322E-756F-46A5-B90F-79A9DF480280}.Release|x86.Build.0 = Release|Any CPU
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Debug|Any CPU.ActiveCfg = Debug|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Debug|Any CPU.Build.0 = Debug|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Debug|x64.ActiveCfg = Debug|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Debug|x64.Build.0 = Debug|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Debug|x86.ActiveCfg = Debug|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Debug|x86.Build.0 = Debug|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Release|Any CPU.ActiveCfg = Release|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Release|Any CPU.Build.0 = Release|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Release|x64.ActiveCfg = Release|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Release|x64.Build.0 = Release|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Release|x86.ActiveCfg = Release|x86
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A}.Release|x86.Build.0 = Release|x86
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -110,5 +124,6 @@ Global
 		{16B0CF1C-5D7B-46D5-9311-94C1435285CA} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{6EC28DDC-8960-4BBC-9AE1-AA7BB50804B3} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{A6C0322E-756F-46A5-B90F-79A9DF480280} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{73FEBCAF-6888-4E06-B32C-ED83AA97B00A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal
