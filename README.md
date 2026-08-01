@@ -51,6 +51,24 @@ The MusicBee host and missing-track repair proofs have passed, as has the
 building the durable state and read-only reconciliation layers on those proven
 boundaries.
 
+## Read-only reconciliation
+
+Phase 2 provides the non-mutating engine used before any synchronization is
+approved:
+
+- Immutable ordered snapshots retain duplicate occurrences independently.
+- M3U/M3U8 parsing accepts GoneMAD relative and absolute Android paths.
+- Track resolution ranks approved mappings, canonical URLs, known phone paths,
+  unique suffixes, filenames, and strong metadata.
+- Ambiguous and unmatched tracks block reconciliation instead of being guessed.
+- Three-way reconciliation automatically proposes unchanged, one-sided, and
+  identical concurrent results; different concurrent edits require review.
+- SQLite stores versioned snapshots, stable identities, aliases, and operation
+  history.
+
+The current engine computes proposals only. It does not write approved results
+to MusicBee or the phone.
+
 ## License
 
 No license has been selected yet. All rights are reserved until one is added.

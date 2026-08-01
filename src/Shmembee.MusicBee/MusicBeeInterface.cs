@@ -1,3 +1,7 @@
+// Vendored without API changes from MusicBee's official plugin interface:
+// https://www.getmusicbee.com/download/plugins/MusicBeeInterface.cs
+// Retrieved 2026-07-31. Preserve struct field order and delegate signatures.
+
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
