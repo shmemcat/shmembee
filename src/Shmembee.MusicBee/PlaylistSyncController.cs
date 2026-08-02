@@ -79,18 +79,27 @@ namespace MusicBeePlugin
             int succeededCount,
             int failedCount,
             string summary,
-            IEnumerable<string> succeededRowIds)
+            IEnumerable<string> succeededRowIds,
+            bool wasCancelled = false,
+            int rolledBackCount = 0,
+            int notStartedCount = 0)
         {
             SucceededCount = succeededCount;
             FailedCount = failedCount;
             Summary = summary;
             SucceededRowIds = succeededRowIds.ToList();
+            WasCancelled = wasCancelled;
+            RolledBackCount = rolledBackCount;
+            NotStartedCount = notStartedCount;
         }
 
         public int SucceededCount { get; }
         public int FailedCount { get; }
         public string Summary { get; }
         public IReadOnlyList<string> SucceededRowIds { get; }
+        public bool WasCancelled { get; }
+        public int RolledBackCount { get; }
+        public int NotStartedCount { get; }
     }
 
     internal sealed class PlaylistSyncController
@@ -885,16 +894,27 @@ namespace MusicBeePlugin
 
         public HarnessBatchApplyResult ApplyAll(
             IReadOnlyList<PlaylistReviewDraft> drafts,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IProgress<int>? progress = null)
         {
             var succeeded = new List<string>();
             var errors = new List<string>();
             var warnings = new List<string>();
+            bool wasCancelled = false;
+            int rolledBackCount = 0;
+            int processedCount = 0;
+            progress?.Report(0);
             IReadOnlyDictionary<string, HarnessPlaylistRow> currentRows =
                 RefreshPlaylistRows().ToDictionary(item => item.RowId, StringComparer.Ordinal);
-            foreach (PlaylistReviewDraft draft in drafts)
+            for (int index = 0; index < drafts.Count; index++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    wasCancelled = true;
+                    break;
+                }
+
+                PlaylistReviewDraft draft = drafts[index];
                 try
                 {
                     if (!draft.IsConfirmed || draft.IsStale)
@@ -950,6 +970,13 @@ namespace MusicBeePlugin
 
                     if (status != SynchronizationApplyStatus.Succeeded)
                     {
+                        if (status == SynchronizationApplyStatus.Cancelled)
+                        {
+                            wasCancelled = true;
+                            rolledBackCount++;
+                            break;
+                        }
+
                         throw new InvalidOperationException(details);
                     }
 
@@ -963,9 +990,29 @@ namespace MusicBeePlugin
                 {
                     errors.Add(draft.RowId + ": " + exception.Message);
                 }
+                finally
+                {
+                    processedCount++;
+                    progress?.Report((index + 1) * 100 / drafts.Count);
+                }
             }
 
             string summary = succeeded.Count + " playlist change(s) applied successfully.";
+            int notStartedCount = drafts.Count - processedCount;
+            if (wasCancelled)
+            {
+                int completedPercentage = drafts.Count == 0
+                    ? 0
+                    : processedCount * 100 / drafts.Count;
+                summary = "Cancelled at " + completedPercentage + "% — "
+                    + succeeded.Count + " playlist(s) applied";
+                if (rolledBackCount > 0)
+                {
+                    summary += ", " + rolledBackCount + " rolled back";
+                }
+
+                summary += ", " + notStartedCount + " not started.";
+            }
             if (errors.Count > 0)
             {
                 summary += Environment.NewLine + errors.Count
@@ -978,7 +1025,7 @@ namespace MusicBeePlugin
                     + string.Join(Environment.NewLine, warnings);
             }
 
-            if (succeeded.Count > 0 && postSyncBackup != null)
+            if (!wasCancelled && succeeded.Count > 0 && postSyncBackup != null)
             {
                 try
                 {
@@ -998,7 +1045,10 @@ namespace MusicBeePlugin
                 succeeded.Count,
                 errors.Count,
                 summary,
-                succeeded);
+                succeeded,
+                wasCancelled,
+                rolledBackCount,
+                notStartedCount);
         }
 
         private SynchronizationLifecycleResult ApplyOneSided(

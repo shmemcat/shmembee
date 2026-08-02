@@ -116,6 +116,26 @@ public sealed class PlaylistDiffEngineTests
     }
 
     [Fact]
+    public void CustomChoicesWithoutOrderAppendNewMemberships()
+    {
+        PlaylistDiff diff = Compare(
+            new[] { Entry("existing-a"), Entry("existing-b"), Entry("musicbee-new") },
+            new[] { Entry("existing-a"), Entry("phone-new"), Entry("existing-b") });
+
+        PlaylistBuildResult result = PlaylistResultBuilder.BuildCustom(
+            diff,
+            diff.Occurrences.Select(occurrence => new PlaylistOccurrenceDecision(
+                occurrence.Key,
+                OccurrenceChoice.Include)),
+            orderSide: null);
+
+        Assert.False(result.IsBlocked);
+        Assert.Equal(
+            new[] { "existing-a", "existing-b", "musicbee-new", "phone-new" },
+            result.Entries.Select(entry => entry.Track.Value));
+    }
+
+    [Fact]
     public void UnknownPhonePathBlocksMusicBeeOnlyInclusion()
     {
         PlaylistDiff diff = Compare(

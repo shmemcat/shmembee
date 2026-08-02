@@ -48,7 +48,7 @@ namespace Shmembee.Core.Reconciliation
         public static PlaylistBuildResult BuildCustom(
             PlaylistDiff diff,
             IEnumerable<PlaylistOccurrenceDecision> decisions,
-            PlaylistSide orderSide)
+            PlaylistSide? orderSide)
         {
             if (decisions == null)
             {
@@ -65,7 +65,7 @@ namespace Shmembee.Core.Reconciliation
         private static PlaylistBuildResult Build(
             PlaylistDiff diff,
             PlaylistSide? completeSide,
-            PlaylistSide orderSide,
+            PlaylistSide? orderSide,
             Dictionary<string, OccurrenceChoice>? choices)
         {
             if (diff == null)
@@ -103,10 +103,32 @@ namespace Shmembee.Core.Reconciliation
                 return new PlaylistBuildResult(Array.Empty<PlaylistSideEntry>(), reasons);
             }
 
-            IReadOnlyList<string> sourceOrder =
-                orderSide == PlaylistSide.MusicBee ? diff.MusicBeeOrder : diff.PhoneOrder;
-            IReadOnlyList<string> alternateOrder =
-                orderSide == PlaylistSide.MusicBee ? diff.PhoneOrder : diff.MusicBeeOrder;
+            if (!orderSide.HasValue)
+            {
+                var combinedOrder = diff.MusicBeeOrder
+                    .Concat(diff.PhoneOrder)
+                    .Distinct(StringComparer.Ordinal);
+                var matchingKeys = new HashSet<string>(
+                    diff.Occurrences
+                        .Where(item => item.Membership == OccurrenceMembership.Both)
+                        .Select(item => item.Key),
+                    StringComparer.Ordinal);
+                List<string> appendedResultKeys = combinedOrder
+                    .Where(key => selected.ContainsKey(key) && matchingKeys.Contains(key))
+                    .Concat(combinedOrder.Where(key =>
+                        selected.ContainsKey(key) && !matchingKeys.Contains(key)))
+                    .ToList();
+                return new PlaylistBuildResult(
+                    appendedResultKeys.Select(key => selected[key]),
+                    reasons);
+            }
+
+            IReadOnlyList<string> sourceOrder = orderSide == PlaylistSide.MusicBee
+                ? diff.MusicBeeOrder
+                : diff.PhoneOrder;
+            IReadOnlyList<string> alternateOrder = orderSide == PlaylistSide.MusicBee
+                ? diff.PhoneOrder
+                : diff.MusicBeeOrder;
             List<string> resultKeys = sourceOrder.Where(selected.ContainsKey).ToList();
             foreach (string key in alternateOrder.Where(selected.ContainsKey))
             {

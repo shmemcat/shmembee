@@ -53,7 +53,7 @@ namespace Shmembee.Application.Reconciliation
             PlaylistPairKey pair,
             string musicBeeChecksum,
             string phoneChecksum,
-            PlaylistSide orderSide,
+            PlaylistSide? orderSide,
             PlaylistSide? completeMembershipSide,
             IEnumerable<PlaylistOccurrenceDecision>? decisions = null)
         {
@@ -72,7 +72,7 @@ namespace Shmembee.Application.Reconciliation
 
         public string PhoneChecksum { get; }
 
-        public PlaylistSide OrderSide { get; }
+        public PlaylistSide? OrderSide { get; }
 
         public PlaylistSide? CompleteMembershipSide { get; }
 
@@ -182,7 +182,7 @@ namespace Shmembee.Application.Reconciliation
                 ? PlaylistResultBuilder.TakeCompleteSide(
                     diff,
                     draft.CompleteMembershipSide.Value,
-                    draft.OrderSide)
+                    draft.OrderSide ?? draft.CompleteMembershipSide.Value)
                 : PlaylistResultBuilder.BuildCustom(diff, draft.Decisions, draft.OrderSide);
             if (built.IsBlocked)
             {

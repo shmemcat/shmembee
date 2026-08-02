@@ -330,7 +330,7 @@ namespace MusicBeePlugin
                 AutoSize = true,
                 WrapContents = false
             };
-            detailBackButton.Text = "← Playlists";
+            detailBackButton.Text = "Save & return to playlists";
             detailBackButton.AutoSize = true;
             detailBackButton.Click += (_, _) => SaveDetailAndReturn();
             showMatchingTracks.Text = "Show matching tracks";
@@ -341,7 +341,7 @@ namespace MusicBeePlugin
             top.Controls.Add(showMatchingTracks);
             var bulkChoices = BuildMembershipBulkChoices();
             ConfigureMembershipGrid();
-            continueButton.Text = "Continue to order →";
+            continueButton.Text = "Choose order (optional) →";
             continueButton.AutoSize = true;
             continueButton.Anchor = AnchorStyles.Right;
             continueButton.Click += (_, _) => ContinueToOrder();
@@ -468,7 +468,6 @@ namespace MusicBeePlugin
             };
             musicBeeOrder.Text = "Preserve MusicBee order";
             musicBeeOrder.AutoSize = true;
-            musicBeeOrder.Checked = true;
             musicBeeOrder.Margin = new Padding(0, 18, 0, 8);
             musicBeeOrder.CheckedChanged += (_, _) => RenderOrderComparison();
             phoneOrder.Text = "Preserve phone order";
@@ -557,6 +556,9 @@ namespace MusicBeePlugin
             page.BringToFront();
             playlistSearch.Enabled = page == landingPage;
             applyAllButton.Visible = page == landingPage;
+            modernSubtitle.Text = page == landingPage || selectedPlaylistRow == null
+                ? "MusicBee  ↔  Phone"
+                : selectedPlaylistRow.DisplayName + "  ·  MusicBee  ↔  Phone";
         }
 
         private void ShowLegacyPage(string pageName)
@@ -1499,6 +1501,17 @@ namespace MusicBeePlugin
 
         private void SaveDetailAndReturn()
         {
+            membershipGrid.EndEdit();
+            if (selectedPlaylistRow != null)
+            {
+                PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
+                if (draft.Action == PlaylistLandingAction.Custom)
+                {
+                    draft.IsConfirmed = true;
+                    SaveReviewDrafts();
+                }
+            }
+
             ShowWorkspacePage(landingPage);
             RenderPlaylistRows();
         }
@@ -1506,6 +1519,13 @@ namespace MusicBeePlugin
         private void ContinueToOrder()
         {
             membershipGrid.EndEdit();
+            if (selectedPlaylistRow != null)
+            {
+                PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
+                musicBeeOrder.Checked = draft.OrderSide == PlaylistSide.MusicBee;
+                phoneOrder.Checked = draft.OrderSide == PlaylistSide.Phone;
+            }
+
             RenderOrderComparison();
             ShowWorkspacePage(orderPage);
         }
@@ -1551,7 +1571,9 @@ namespace MusicBeePlugin
             PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
             draft.OrderSide = musicBeeOrder.Checked
                 ? PlaylistSide.MusicBee
-                : PlaylistSide.Phone;
+                : phoneOrder.Checked
+                    ? PlaylistSide.Phone
+                    : (PlaylistSide?)null;
             draft.Action = PlaylistLandingAction.Custom;
             draft.IsConfirmed = true;
             SaveReviewDrafts();
@@ -1588,19 +1610,33 @@ namespace MusicBeePlugin
                 return;
             }
 
+            const string applyActivity = "Applying reviewed playlist changes…";
+            var progress = new Progress<int>(percentage =>
+            {
+                if (!IsDisposed)
+                {
+                    activityLabel.Text = applyActivity + " " + percentage + "%";
+                }
+            });
             await RunOperationAsync(
-                "Applying reviewed playlist changes…",
-                token => Task.Run(() => controller.ApplyAll(selected, token), token),
+                applyActivity + " 0%",
+                token => Task.Run(
+                    () => controller.ApplyAll(selected, token, progress),
+                    CancellationToken.None),
                 result =>
                 {
                     MessageBox.Show(
                         this,
                         result.Summary,
-                        result.FailedCount == 0
+                        result.WasCancelled
+                            ? "Playlist changes cancelled"
+                            : result.FailedCount == 0
                             ? "Playlist changes complete"
                             : "Playlist changes need attention",
                         MessageBoxButtons.OK,
-                        result.FailedCount == 0
+                        result.WasCancelled
+                            ? MessageBoxIcon.Information
+                            : result.FailedCount == 0
                             ? MessageBoxIcon.Information
                             : MessageBoxIcon.Warning);
                     foreach (string rowId in result.SucceededRowIds)
@@ -1611,7 +1647,8 @@ namespace MusicBeePlugin
                     SaveReviewDrafts();
                     ApplyCompleted?.Invoke(this, EventArgs.Empty);
                     BeginInvoke(new Action(async () => await RefreshAsync()));
-                });
+                },
+                completeWhenCancelled: true);
         }
 
         private void PlaylistGridCellFormatting(
@@ -1742,7 +1779,8 @@ namespace MusicBeePlugin
         private async Task RunOperationAsync<T>(
             string activity,
             Func<CancellationToken, Task<T>> work,
-            Action<T> completed)
+            Action<T> completed,
+            bool completeWhenCancelled = false)
         {
             operation?.Dispose();
             operation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
@@ -1751,7 +1789,7 @@ namespace MusicBeePlugin
             try
             {
                 T result = await work(token);
-                if (!token.IsCancellationRequested && !IsDisposed)
+                if ((!token.IsCancellationRequested || completeWhenCancelled) && !IsDisposed)
                 {
                     completed(result);
                 }
@@ -2004,7 +2042,6 @@ namespace MusicBeePlugin
             PhoneOccurrenceKeys = new HashSet<string>(
                 Enumerable.Empty<string>(),
                 StringComparer.Ordinal);
-            OrderSide = PlaylistSide.MusicBee;
         }
 
         private PlaylistReviewDraft(PersistedPlaylistReviewDraft persisted)
@@ -2024,13 +2061,14 @@ namespace MusicBeePlugin
                 out PlaylistLandingAction action)
                 ? action
                 : PlaylistLandingAction.None;
+            IsConfirmed = persisted.IsConfirmed;
             OrderSide = Enum.TryParse(
                 persisted.OrderSide,
                 ignoreCase: false,
                 out PlaylistSide orderSide)
+                && (Action != PlaylistLandingAction.Custom || IsConfirmed)
                 ? orderSide
-                : PlaylistSide.MusicBee;
-            IsConfirmed = persisted.IsConfirmed;
+                : (PlaylistSide?)null;
             IsDeletion = persisted.IsDeletion;
         }
 
@@ -2081,7 +2119,7 @@ namespace MusicBeePlugin
                 item.Key,
                 ChoiceFor(item)));
 
-        public PlaylistSide OrderSide { get; set; }
+        public PlaylistSide? OrderSide { get; set; }
 
         public bool IsConfirmed { get; set; }
 
@@ -2117,7 +2155,7 @@ namespace MusicBeePlugin
                 Action = Action.ToString(),
                 IncludedOccurrenceKeys = MusicBeeOccurrenceKeys.ToList(),
                 PhoneOccurrenceKeys = PhoneOccurrenceKeys.ToList(),
-                OrderSide = OrderSide.ToString(),
+                OrderSide = OrderSide?.ToString() ?? string.Empty,
                 IsConfirmed = IsConfirmed,
                 IsDeletion = IsDeletion
             };
