@@ -934,6 +934,7 @@ namespace MusicBeePlugin
             var errors = new List<string>();
             var warnings = new List<string>();
             bool wasCancelled = false;
+            bool phoneConnectionLost = false;
             int rolledBackCount = 0;
             int processedCount = 0;
             progress?.Report(0);
@@ -1021,12 +1022,28 @@ namespace MusicBeePlugin
                 }
                 catch (Exception exception) when (!(exception is OperationCanceledException))
                 {
-                    errors.Add(draft.RowId + ": " + exception.Message);
+                    string playlistName = currentRows.TryGetValue(
+                        draft.RowId,
+                        out HarnessPlaylistRow? failedRow)
+                            ? failedRow.DisplayName
+                            : draft.RowId;
+                    errors.Add(
+                        "• " + playlistName + ": "
+                        + DescribeApplyFailure(exception.Message));
+                    if (IsHungWpdDeviceFailure(exception.Message))
+                    {
+                        phoneConnectionLost = true;
+                    }
                 }
                 finally
                 {
                     processedCount++;
                     progress?.Report((index + 1) * 100 / drafts.Count);
+                }
+
+                if (phoneConnectionLost)
+                {
+                    break;
                 }
             }
 
@@ -1046,19 +1063,38 @@ namespace MusicBeePlugin
 
                 summary += ", " + notStartedCount + " not started.";
             }
+            else if (phoneConnectionLost)
+            {
+                summary += Environment.NewLine + Environment.NewLine
+                    + "The phone stopped responding, so Shmembee stopped the sync "
+                    + "to avoid causing more failures.";
+                if (notStartedCount > 0)
+                {
+                    summary += Environment.NewLine + notStartedCount
+                        + " playlist change(s) were not started.";
+                }
+
+                summary += Environment.NewLine
+                    + "Reconnect and unlock the phone, wait for Windows to recognize it, "
+                    + "then refresh and review the playlists before trying again.";
+            }
             if (errors.Count > 0)
             {
-                summary += Environment.NewLine + errors.Count
-                    + " failed:" + Environment.NewLine + string.Join(Environment.NewLine, errors);
+                summary += Environment.NewLine + Environment.NewLine + errors.Count
+                    + " playlist change(s) need attention:"
+                    + Environment.NewLine + string.Join(Environment.NewLine, errors);
             }
             if (warnings.Count > 0)
             {
-                summary += Environment.NewLine + warnings.Count
+                summary += Environment.NewLine + Environment.NewLine + warnings.Count
                     + " warning(s):" + Environment.NewLine
                     + string.Join(Environment.NewLine, warnings);
             }
 
-            if (!wasCancelled && succeeded.Count > 0 && postSyncBackup != null)
+            if (!wasCancelled
+                && !phoneConnectionLost
+                && succeeded.Count > 0
+                && postSyncBackup != null)
             {
                 try
                 {
@@ -1082,6 +1118,47 @@ namespace MusicBeePlugin
                 wasCancelled,
                 rolledBackCount,
                 notStartedCount);
+        }
+
+        private static bool IsHungWpdDeviceFailure(string details) =>
+            !string.IsNullOrEmpty(details)
+            && (details.IndexOf("0x802A0006", StringComparison.OrdinalIgnoreCase) >= 0
+                || details.IndexOf(
+                    "E_WPD_DEVICE_IS_HUNG",
+                    StringComparison.OrdinalIgnoreCase) >= 0);
+
+        private static string DescribeApplyFailure(string details)
+        {
+            if (string.IsNullOrWhiteSpace(details))
+            {
+                return "The change could not be applied.";
+            }
+
+            if (IsHungWpdDeviceFailure(details))
+            {
+                return "The phone stopped responding during an MTP file operation "
+                    + "(WPD 0x802A0006). The operation was stopped; its final phone "
+                    + "state could not be confirmed.";
+            }
+
+            if (details.IndexOf("0x80042009", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return "The phone invalidated an MTP file reference, usually after a "
+                    + "disconnect or media refresh (0x80042009). Refresh the playlists "
+                    + "before retrying.";
+            }
+
+            string readable = Regex.Replace(
+                details,
+                @"WPD sidecar operation [0-9a-f]{32} failed(?: at ([a-z0-9-]+))?",
+                match => string.IsNullOrEmpty(match.Groups[1].Value)
+                    ? "A phone file operation failed"
+                    : "A phone file operation failed during "
+                        + match.Groups[1].Value.Replace('-', ' '),
+                RegexOptions.IgnoreCase);
+            readable = Regex.Replace(readable, @"\s*\[[^\]]+\]\s*", " ");
+            readable = Regex.Replace(readable, @"\s+", " ").Trim();
+            return readable;
         }
 
         private SynchronizationLifecycleResult ApplyOneSided(
