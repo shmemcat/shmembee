@@ -330,7 +330,7 @@ namespace MusicBeePlugin
                 AutoSize = true,
                 WrapContents = false
             };
-            detailBackButton.Text = "Save & return to playlists";
+            detailBackButton.Text = "Save && return to playlists";
             detailBackButton.AutoSize = true;
             detailBackButton.Click += (_, _) => SaveDetailAndReturn();
             showMatchingTracks.Text = "Show matching tracks";
@@ -362,9 +362,9 @@ namespace MusicBeePlugin
                 ColumnCount = 3,
                 Padding = new Padding(0, 6, 0, 6)
             };
-            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46F));
-            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 8F));
-            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46F));
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16F));
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42F));
 
             var musicBeeChoices = new FlowLayoutPanel
             {
@@ -405,7 +405,16 @@ namespace MusicBeePlugin
             phoneChoices.Controls.Add(selectAllPhoneTracks);
             phoneChoices.Controls.Add(selectExistingPhoneTracks);
 
+            var selectExistingTracks = new Button
+            {
+                Text = "Select existing both",
+                AutoSize = true,
+                Anchor = AnchorStyles.None
+            };
+            selectExistingTracks.Click += (_, _) => SelectExistingMembershipTracks();
+
             choices.Controls.Add(musicBeeChoices, 0, 0);
+            choices.Controls.Add(selectExistingTracks, 1, 0);
             choices.Controls.Add(phoneChoices, 2, 0);
             return choices;
         }
@@ -1160,12 +1169,19 @@ namespace MusicBeePlugin
                 return;
             }
 
+            var progress = new Progress<HarnessOperationProgress>(update =>
+            {
+                if (!IsDisposed)
+                {
+                    activityLabel.Text = update.Percentage + "% - " + update.Status;
+                }
+            });
             await RunOperationAsync(
-                "Reading MusicBee and phone playlists…",
+                "0% - Starting",
                 token => Task.Run(() =>
                 {
                     token.ThrowIfCancellationRequested();
-                    return controller.RefreshPlaylistRows();
+                    return controller.RefreshPlaylistRows(progress);
                 }, token),
                 result =>
                 {
@@ -1490,6 +1506,32 @@ namespace MusicBeePlugin
                 if (!existingOnly || exists)
                 {
                     draft.SetChoice(occurrence.Key, choice);
+                }
+            }
+
+            draft.Action = PlaylistLandingAction.Custom;
+            draft.IsConfirmed = false;
+            SaveReviewDrafts();
+            RenderMembershipRows();
+        }
+
+        private void SelectExistingMembershipTracks()
+        {
+            if (selectedPlaylistRow?.Diff == null)
+            {
+                return;
+            }
+
+            PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
+            foreach (PlaylistOccurrence occurrence in selectedPlaylistRow.Diff.Occurrences)
+            {
+                if (occurrence.Membership == OccurrenceMembership.MusicBeeOnly)
+                {
+                    draft.SetChoice(occurrence.Key, OccurrenceChoice.MusicBee);
+                }
+                else if (occurrence.Membership == OccurrenceMembership.PhoneOnly)
+                {
+                    draft.SetChoice(occurrence.Key, OccurrenceChoice.Phone);
                 }
             }
 

@@ -102,6 +102,18 @@ namespace MusicBeePlugin
         public int NotStartedCount { get; }
     }
 
+    internal sealed class HarnessOperationProgress
+    {
+        public HarnessOperationProgress(int percentage, string status)
+        {
+            Percentage = percentage;
+            Status = status;
+        }
+
+        public int Percentage { get; }
+        public string Status { get; }
+    }
+
     internal sealed class PlaylistSyncController
     {
         public const string PlaylistName = "Shmembee Phase 3 Test";
@@ -625,12 +637,16 @@ namespace MusicBeePlugin
                 ?? throw new ArgumentNullException(nameof(dispatcher));
         }
 
-        public IReadOnlyList<HarnessPlaylistRow> RefreshPlaylistRows()
+        public IReadOnlyList<HarnessPlaylistRow> RefreshPlaylistRows(
+            IProgress<HarnessOperationProgress>? progress = null)
         {
+            ReportProgress(progress, 0, "Starting");
             IReadOnlyList<MusicPlaylist> playlists = InvokeOnMusicBeeThread(
                 () => libraryReader.ReadPlaylists());
+            ReportProgress(progress, 10, "MusicBee playlists read");
             IReadOnlyList<LibraryTrack> library = ToResolutionLibrary(
                 InvokeOnMusicBeeThread(() => libraryReader.ReadLibrary()));
+            ReportProgress(progress, 25, "MusicBee library read");
             var libraryUrls = new HashSet<string>(
                 library.Select(track => track.Url),
                 StringComparer.OrdinalIgnoreCase);
@@ -639,8 +655,10 @@ namespace MusicBeePlugin
                 ResolvePhoneMediaPaths(
                     resolverIndex,
                     playlists.SelectMany(item => item.TrackUrls));
+            ReportProgress(progress, 45, "Phone media paths resolved");
             IReadOnlyList<PhonePlaylistContent>? phoneSnapshot =
                 phoneSnapshotReader?.ReadPlaylistSnapshot();
+            ReportProgress(progress, 65, "Phone playlists read");
             IPhonePlaylistCatalogReader catalogReader = phoneSnapshot == null
                 ? phoneCatalogReader
                 : new SnapshotPhonePlaylistCatalogReader(phoneSnapshot);
@@ -667,8 +685,9 @@ namespace MusicBeePlugin
                 }
             }
             var rows = new List<HarnessPlaylistRow>();
-            foreach (PlaylistCatalogRow catalog in catalogRows)
+            for (int index = 0; index < catalogRows.Count; index++)
             {
+                PlaylistCatalogRow catalog = catalogRows[index];
                 rows.Add(BuildHarnessPlaylistRow(
                     new PlaylistCatalogViewRow(catalog, null, catalog.Error),
                     library,
@@ -676,10 +695,24 @@ namespace MusicBeePlugin
                     resolverIndex,
                     mediaPaths,
                     phoneStates));
+                ReportProgress(
+                    progress,
+                    65 + ((index + 1) * 35 / Math.Max(1, catalogRows.Count)),
+                    "Comparing playlists "
+                        + (index + 1)
+                        + " of "
+                        + catalogRows.Count);
             }
 
+            ReportProgress(progress, 100, "Playlist comparison complete");
             return rows;
         }
+
+        private static void ReportProgress(
+            IProgress<HarnessOperationProgress>? progress,
+            int percentage,
+            string status) =>
+            progress?.Report(new HarnessOperationProgress(percentage, status));
 
         private HarnessPlaylistRow BuildHarnessPlaylistRow(
             PlaylistCatalogViewRow view,
