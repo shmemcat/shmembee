@@ -1104,9 +1104,10 @@ namespace MusicBeePlugin
                 }
                 catch (Exception exception)
                 {
-                    summary += Environment.NewLine
-                        + "The sync succeeded, but the post-sync M3U backup failed: "
-                        + exception.Message;
+                    summary += Environment.NewLine + Environment.NewLine
+                        + "The playlist changes succeeded, but the safety backup "
+                        + "could not be created:" + Environment.NewLine
+                        + "• " + DescribeApplyFailure(exception.Message);
                 }
             }
 
@@ -1123,6 +1124,7 @@ namespace MusicBeePlugin
         private static bool IsHungWpdDeviceFailure(string details) =>
             !string.IsNullOrEmpty(details)
             && (details.IndexOf("0x802A0006", StringComparison.OrdinalIgnoreCase) >= 0
+                || details.IndexOf("-2144731130", StringComparison.Ordinal) >= 0
                 || details.IndexOf(
                     "E_WPD_DEVICE_IS_HUNG",
                     StringComparison.OrdinalIgnoreCase) >= 0);
@@ -1141,7 +1143,8 @@ namespace MusicBeePlugin
                     + "state could not be confirmed.";
             }
 
-            if (details.IndexOf("0x80042009", StringComparison.OrdinalIgnoreCase) >= 0)
+            if (details.IndexOf("0x80042009", StringComparison.OrdinalIgnoreCase) >= 0
+                || details.IndexOf("-2147213303", StringComparison.Ordinal) >= 0)
             {
                 return "The phone invalidated an MTP file reference, usually after a "
                     + "disconnect or media refresh (0x80042009). Refresh the playlists "
