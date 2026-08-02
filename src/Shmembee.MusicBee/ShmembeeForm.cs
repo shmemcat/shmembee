@@ -53,8 +53,13 @@ namespace MusicBeePlugin
         private readonly Panel orderPage = new Panel();
         private readonly DataGridView playlistGrid = new DataGridView();
         private readonly DataGridView membershipGrid = new DataGridView();
+        private readonly DataGridView orderComparisonGrid = new DataGridView();
         private readonly TextBox playlistSearch = new TextBox();
         private readonly CheckBox showMatchingTracks = new CheckBox();
+        private readonly Button selectAllMusicBeeTracks = new Button();
+        private readonly Button selectExistingMusicBeeTracks = new Button();
+        private readonly Button selectAllPhoneTracks = new Button();
+        private readonly Button selectExistingPhoneTracks = new Button();
         private readonly RadioButton musicBeeOrder = new RadioButton();
         private readonly RadioButton phoneOrder = new RadioButton();
         private readonly Label modernTitle = new Label();
@@ -312,8 +317,9 @@ namespace MusicBeePlugin
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 3
+                RowCount = 4
             };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -332,16 +338,75 @@ namespace MusicBeePlugin
             showMatchingTracks.CheckedChanged += (_, _) => RenderMembershipRows();
             top.Controls.Add(detailBackButton);
             top.Controls.Add(showMatchingTracks);
+            var bulkChoices = BuildMembershipBulkChoices();
             ConfigureMembershipGrid();
             continueButton.Text = "Continue to order →";
             continueButton.AutoSize = true;
             continueButton.Anchor = AnchorStyles.Right;
             continueButton.Click += (_, _) => ContinueToOrder();
             root.Controls.Add(top, 0, 0);
-            root.Controls.Add(membershipGrid, 0, 1);
-            root.Controls.Add(continueButton, 0, 2);
+            root.Controls.Add(bulkChoices, 0, 1);
+            root.Controls.Add(membershipGrid, 0, 2);
+            root.Controls.Add(continueButton, 0, 3);
             membershipPage.Controls.Add(root);
             return membershipPage;
+        }
+
+        private Control BuildMembershipBulkChoices()
+        {
+            var choices = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                ColumnCount = 3,
+                Padding = new Padding(0, 6, 0, 6)
+            };
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46F));
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 8F));
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 46F));
+
+            var musicBeeChoices = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                WrapContents = false
+            };
+            selectAllMusicBeeTracks.Text = "Select all MusicBee";
+            selectAllMusicBeeTracks.AutoSize = true;
+            selectAllMusicBeeTracks.Click += (_, _) => SelectMembershipSide(
+                PlaylistSide.MusicBee,
+                existingOnly: false);
+            selectExistingMusicBeeTracks.Text = "Select existing MusicBee";
+            selectExistingMusicBeeTracks.AutoSize = true;
+            selectExistingMusicBeeTracks.Click += (_, _) => SelectMembershipSide(
+                PlaylistSide.MusicBee,
+                existingOnly: true);
+            musicBeeChoices.Controls.Add(selectAllMusicBeeTracks);
+            musicBeeChoices.Controls.Add(selectExistingMusicBeeTracks);
+
+            var phoneChoices = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                AutoSize = true,
+                WrapContents = false,
+                FlowDirection = FlowDirection.RightToLeft
+            };
+            selectAllPhoneTracks.Text = "Select all phone";
+            selectAllPhoneTracks.AutoSize = true;
+            selectAllPhoneTracks.Click += (_, _) => SelectMembershipSide(
+                PlaylistSide.Phone,
+                existingOnly: false);
+            selectExistingPhoneTracks.Text = "Select existing phone";
+            selectExistingPhoneTracks.AutoSize = true;
+            selectExistingPhoneTracks.Click += (_, _) => SelectMembershipSide(
+                PlaylistSide.Phone,
+                existingOnly: true);
+            phoneChoices.Controls.Add(selectAllPhoneTracks);
+            phoneChoices.Controls.Add(selectExistingPhoneTracks);
+
+            choices.Controls.Add(musicBeeChoices, 0, 0);
+            choices.Controls.Add(phoneChoices, 2, 0);
+            return choices;
         }
 
         private void ConfigureMembershipGrid()
@@ -354,13 +419,15 @@ namespace MusicBeePlugin
             membershipGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             membershipGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             membershipGrid.Columns.Add(new DataGridViewCheckBoxColumn
-            { Name = "Include", HeaderText = "Keep", FillWeight = 8 });
+            { Name = "TakeMusicBee", HeaderText = "", FillWeight = 7 });
             membershipGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "MusicBeeTrack", HeaderText = "MusicBee track", FillWeight = 42, ReadOnly = true });
+            { Name = "MusicBeeTrack", HeaderText = "MusicBee track", FillWeight = 39, ReadOnly = true });
             membershipGrid.Columns.Add(new DataGridViewTextBoxColumn
             { Name = "Change", HeaderText = "", FillWeight = 8, ReadOnly = true });
             membershipGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { Name = "PhoneTrack", HeaderText = "Phone track", FillWeight = 42, ReadOnly = true });
+            { Name = "PhoneTrack", HeaderText = "Phone track", FillWeight = 39, ReadOnly = true });
+            membershipGrid.Columns.Add(new DataGridViewCheckBoxColumn
+            { Name = "TakePhone", HeaderText = "", FillWeight = 7 });
             membershipGrid.CellFormatting += MembershipGridCellFormatting;
         }
 
@@ -380,13 +447,18 @@ namespace MusicBeePlugin
             orderBackButton.Text = "← Track choices";
             orderBackButton.AutoSize = true;
             orderBackButton.Click += (_, _) => ShowWorkspacePage(membershipPage);
-            var choices = new FlowLayoutPanel
+            var choices = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
+                ColumnCount = 2,
+                RowCount = 3,
                 Padding = new Padding(20)
             };
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            choices.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            choices.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            choices.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             var heading = new Label
             {
                 Text = "Choose the final playlist order",
@@ -396,12 +468,18 @@ namespace MusicBeePlugin
             musicBeeOrder.Text = "Preserve MusicBee order";
             musicBeeOrder.AutoSize = true;
             musicBeeOrder.Checked = true;
-            musicBeeOrder.Margin = new Padding(0, 24, 0, 8);
+            musicBeeOrder.Margin = new Padding(0, 18, 0, 8);
+            musicBeeOrder.CheckedChanged += (_, _) => RenderOrderComparison();
             phoneOrder.Text = "Preserve phone order";
             phoneOrder.AutoSize = true;
-            choices.Controls.Add(heading);
-            choices.Controls.Add(musicBeeOrder);
-            choices.Controls.Add(phoneOrder);
+            phoneOrder.Margin = new Padding(0, 18, 0, 8);
+            ConfigureOrderComparisonGrid();
+            choices.Controls.Add(heading, 0, 0);
+            choices.SetColumnSpan(heading, 2);
+            choices.Controls.Add(musicBeeOrder, 0, 1);
+            choices.Controls.Add(phoneOrder, 1, 1);
+            choices.Controls.Add(orderComparisonGrid, 0, 2);
+            choices.SetColumnSpan(orderComparisonGrid, 2);
             confirmDraftButton.Text = "Confirm changes";
             confirmDraftButton.AutoSize = true;
             confirmDraftButton.Anchor = AnchorStyles.Right;
@@ -411,6 +489,26 @@ namespace MusicBeePlugin
             root.Controls.Add(confirmDraftButton, 0, 2);
             orderPage.Controls.Add(root);
             return orderPage;
+        }
+
+        private void ConfigureOrderComparisonGrid()
+        {
+            orderComparisonGrid.Dock = DockStyle.Fill;
+            orderComparisonGrid.AutoGenerateColumns = false;
+            orderComparisonGrid.AllowUserToAddRows = false;
+            orderComparisonGrid.AllowUserToDeleteRows = false;
+            orderComparisonGrid.ReadOnly = true;
+            orderComparisonGrid.RowHeadersVisible = false;
+            orderComparisonGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            orderComparisonGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
+            orderComparisonGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "MusicBeePosition", HeaderText = "#", FillWeight = 6 });
+            orderComparisonGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "MusicBeeOrder", HeaderText = "MusicBee order", FillWeight = 44 });
+            orderComparisonGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "PhonePosition", HeaderText = "#", FillWeight = 6 });
+            orderComparisonGrid.Columns.Add(new DataGridViewTextBoxColumn
+            { Name = "PhoneOrder", HeaderText = "Phone order", FillWeight = 44 });
         }
 
         private Control BuildModernFooter()
@@ -1280,23 +1378,31 @@ namespace MusicBeePlugin
                     continue;
                 }
 
-                bool include = draft.IncludedOccurrenceKeys.Contains(occurrence.Key);
+                OccurrenceChoice choice = draft.ChoiceFor(occurrence);
                 string marker = occurrence.Membership == OccurrenceMembership.Both
                     ? "="
                     : occurrence.Membership == OccurrenceMembership.MusicBeeOnly
                         ? "+"
                         : "−";
                 int index = membershipGrid.Rows.Add(
-                    include,
+                    choice == OccurrenceChoice.MusicBee,
                     occurrence.MusicBeeEntry?.SourceValue ?? string.Empty,
                     marker,
-                    occurrence.PhoneEntry?.SourceValue ?? string.Empty);
+                    occurrence.PhoneEntry?.SourceValue ?? string.Empty,
+                    choice == OccurrenceChoice.Phone);
                 membershipGrid.Rows[index].Tag = occurrence;
-                bool blocked = occurrence.IsChoiceBlocked(
-                    OccurrenceChoice.Include,
-                    out string? reason);
-                membershipGrid.Rows[index].Cells["Include"].ReadOnly = blocked;
-                membershipGrid.Rows[index].Cells["Include"].ToolTipText = reason ?? string.Empty;
+                bool musicBeeBlocked = occurrence.IsChoiceBlocked(
+                    OccurrenceChoice.MusicBee,
+                    out string? musicBeeReason);
+                bool phoneBlocked = occurrence.IsChoiceBlocked(
+                    OccurrenceChoice.Phone,
+                    out string? phoneReason);
+                membershipGrid.Rows[index].Cells["TakeMusicBee"].ReadOnly = musicBeeBlocked;
+                membershipGrid.Rows[index].Cells["TakeMusicBee"].ToolTipText =
+                    musicBeeReason ?? string.Empty;
+                membershipGrid.Rows[index].Cells["TakePhone"].ReadOnly = phoneBlocked;
+                membershipGrid.Rows[index].Cells["TakePhone"].ToolTipText =
+                    phoneReason ?? string.Empty;
             }
 
             membershipGrid.CellValueChanged -= MembershipGridCellValueChanged;
@@ -1316,7 +1422,8 @@ namespace MusicBeePlugin
         private void MembershipGridCellValueChanged(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0
-                || membershipGrid.Columns[e.ColumnIndex].Name != "Include"
+                || (membershipGrid.Columns[e.ColumnIndex].Name != "TakeMusicBee"
+                    && membershipGrid.Columns[e.ColumnIndex].Name != "TakePhone")
                 || selectedPlaylistRow == null)
             {
                 return;
@@ -1330,20 +1437,56 @@ namespace MusicBeePlugin
             }
 
             PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
-            bool include = Convert.ToBoolean(
-                membershipGrid.Rows[e.RowIndex].Cells["Include"].Value);
-            if (include)
+            string columnName = membershipGrid.Columns[e.ColumnIndex].Name;
+            bool selected = Convert.ToBoolean(
+                membershipGrid.Rows[e.RowIndex].Cells[columnName].Value);
+            OccurrenceChoice choice = columnName == "TakeMusicBee"
+                ? OccurrenceChoice.MusicBee
+                : OccurrenceChoice.Phone;
+            if (selected)
             {
-                draft.IncludedOccurrenceKeys.Add(occurrence.Key);
+                draft.SetChoice(occurrence.Key, choice);
+                string otherColumn = columnName == "TakeMusicBee"
+                    ? "TakePhone"
+                    : "TakeMusicBee";
+                membershipGrid.Rows[e.RowIndex].Cells[otherColumn].Value = false;
             }
             else
             {
-                draft.IncludedOccurrenceKeys.Remove(occurrence.Key);
+                draft.SetChoice(occurrence.Key, OccurrenceChoice.Exclude);
             }
 
             draft.Action = PlaylistLandingAction.Custom;
             draft.IsConfirmed = false;
             SaveReviewDrafts();
+        }
+
+        private void SelectMembershipSide(PlaylistSide side, bool existingOnly)
+        {
+            if (selectedPlaylistRow?.Diff == null)
+            {
+                return;
+            }
+
+            PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
+            OccurrenceChoice choice = side == PlaylistSide.MusicBee
+                ? OccurrenceChoice.MusicBee
+                : OccurrenceChoice.Phone;
+            foreach (PlaylistOccurrence occurrence in selectedPlaylistRow.Diff.Occurrences)
+            {
+                bool exists = side == PlaylistSide.MusicBee
+                    ? occurrence.MusicBeeEntry != null
+                    : occurrence.PhoneEntry != null;
+                if (!existingOnly || exists)
+                {
+                    draft.SetChoice(occurrence.Key, choice);
+                }
+            }
+
+            draft.Action = PlaylistLandingAction.Custom;
+            draft.IsConfirmed = false;
+            SaveReviewDrafts();
+            RenderMembershipRows();
         }
 
         private void SaveDetailAndReturn()
@@ -1355,7 +1498,39 @@ namespace MusicBeePlugin
         private void ContinueToOrder()
         {
             membershipGrid.EndEdit();
+            RenderOrderComparison();
             ShowWorkspacePage(orderPage);
+        }
+
+        private void RenderOrderComparison()
+        {
+            orderComparisonGrid.Rows.Clear();
+            PlaylistDiff? diff = selectedPlaylistRow?.Diff;
+            if (diff == null)
+            {
+                return;
+            }
+
+            var byKey = diff.Occurrences.ToDictionary(
+                item => item.Key,
+                StringComparer.Ordinal);
+            int count = Math.Max(diff.MusicBeeOrder.Count, diff.PhoneOrder.Count);
+            for (int index = 0; index < count; index++)
+            {
+                string musicBeeValue = index < diff.MusicBeeOrder.Count
+                    && byKey.TryGetValue(diff.MusicBeeOrder[index], out PlaylistOccurrence? musicBee)
+                        ? musicBee.MusicBeeEntry?.SourceValue ?? string.Empty
+                        : string.Empty;
+                string phoneValue = index < diff.PhoneOrder.Count
+                    && byKey.TryGetValue(diff.PhoneOrder[index], out PlaylistOccurrence? phone)
+                        ? phone.PhoneEntry?.SourceValue ?? string.Empty
+                        : string.Empty;
+                orderComparisonGrid.Rows.Add(
+                    index < diff.MusicBeeOrder.Count ? (index + 1).ToString() : string.Empty,
+                    musicBeeValue,
+                    index < diff.PhoneOrder.Count ? (index + 1).ToString() : string.Empty,
+                    phoneValue);
+            }
         }
 
         private void ConfirmDraft()
@@ -1812,11 +1987,14 @@ namespace MusicBeePlugin
             RowId = row.RowId;
             MusicBeeChecksum = row.MusicBeeChecksum;
             PhoneChecksum = row.PhoneChecksum;
-            IncludedOccurrenceKeys = new HashSet<string>(
+            MusicBeeOccurrenceKeys = new HashSet<string>(
                 row.Diff?.Occurrences
                     .Where(item => item.Membership == OccurrenceMembership.Both)
                     .Select(item => item.Key)
                 ?? Enumerable.Empty<string>(),
+                StringComparer.Ordinal);
+            PhoneOccurrenceKeys = new HashSet<string>(
+                Enumerable.Empty<string>(),
                 StringComparer.Ordinal);
             OrderSide = PlaylistSide.MusicBee;
         }
@@ -1826,8 +2004,11 @@ namespace MusicBeePlugin
             RowId = persisted.RowId;
             MusicBeeChecksum = persisted.MusicBeeChecksum;
             PhoneChecksum = persisted.PhoneChecksum;
-            IncludedOccurrenceKeys = new HashSet<string>(
+            MusicBeeOccurrenceKeys = new HashSet<string>(
                 persisted.IncludedOccurrenceKeys,
+                StringComparer.Ordinal);
+            PhoneOccurrenceKeys = new HashSet<string>(
+                persisted.PhoneOccurrenceKeys ?? Enumerable.Empty<string>(),
                 StringComparer.Ordinal);
             Action = Enum.TryParse(
                 persisted.Action,
@@ -1853,7 +2034,44 @@ namespace MusicBeePlugin
 
         public PlaylistLandingAction Action { get; set; }
 
-        public HashSet<string> IncludedOccurrenceKeys { get; }
+        public HashSet<string> MusicBeeOccurrenceKeys { get; }
+
+        public HashSet<string> PhoneOccurrenceKeys { get; }
+
+        public OccurrenceChoice ChoiceFor(PlaylistOccurrence occurrence)
+        {
+            if (MusicBeeOccurrenceKeys.Contains(occurrence.Key))
+            {
+                return OccurrenceChoice.MusicBee;
+            }
+
+            if (PhoneOccurrenceKeys.Contains(occurrence.Key))
+            {
+                return OccurrenceChoice.Phone;
+            }
+
+            return OccurrenceChoice.Exclude;
+        }
+
+        public void SetChoice(string occurrenceKey, OccurrenceChoice choice)
+        {
+            MusicBeeOccurrenceKeys.Remove(occurrenceKey);
+            PhoneOccurrenceKeys.Remove(occurrenceKey);
+            if (choice == OccurrenceChoice.MusicBee)
+            {
+                MusicBeeOccurrenceKeys.Add(occurrenceKey);
+            }
+            else if (choice == OccurrenceChoice.Phone)
+            {
+                PhoneOccurrenceKeys.Add(occurrenceKey);
+            }
+        }
+
+        public IEnumerable<PlaylistOccurrenceDecision> DecisionsFor(
+            IEnumerable<PlaylistOccurrence> occurrences) =>
+            occurrences.Select(item => new PlaylistOccurrenceDecision(
+                item.Key,
+                ChoiceFor(item)));
 
         public PlaylistSide OrderSide { get; set; }
 
@@ -1889,7 +2107,8 @@ namespace MusicBeePlugin
                 MusicBeeChecksum = MusicBeeChecksum,
                 PhoneChecksum = PhoneChecksum,
                 Action = Action.ToString(),
-                IncludedOccurrenceKeys = IncludedOccurrenceKeys.ToList(),
+                IncludedOccurrenceKeys = MusicBeeOccurrenceKeys.ToList(),
+                PhoneOccurrenceKeys = PhoneOccurrenceKeys.ToList(),
                 OrderSide = OrderSide.ToString(),
                 IsConfirmed = IsConfirmed,
                 IsDeletion = IsDeletion

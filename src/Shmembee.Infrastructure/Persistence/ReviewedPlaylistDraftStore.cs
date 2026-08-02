@@ -25,6 +25,7 @@ namespace Shmembee.Infrastructure.Persistence
             PhoneChecksum = string.Empty;
             Action = string.Empty;
             IncludedOccurrenceKeys = new List<string>();
+            PhoneOccurrenceKeys = new List<string>();
             OrderSide = string.Empty;
         }
 
@@ -49,13 +50,16 @@ namespace Shmembee.Infrastructure.Persistence
         [DataMember(Order = 7)]
         public List<string> IncludedOccurrenceKeys { get; set; }
 
-        [DataMember(Order = 8)]
-        public string OrderSide { get; set; }
+        [DataMember(Order = 8, EmitDefaultValue = false)]
+        public List<string> PhoneOccurrenceKeys { get; set; }
 
         [DataMember(Order = 9)]
-        public bool IsConfirmed { get; set; }
+        public string OrderSide { get; set; }
 
         [DataMember(Order = 10)]
+        public bool IsConfirmed { get; set; }
+
+        [DataMember(Order = 11)]
         public bool IsDeletion { get; set; }
 
         public PersistedDraftFreshness GetFreshness(
@@ -216,6 +220,11 @@ namespace Shmembee.Infrastructure.Persistence
                     PhoneChecksum = draft.PhoneChecksum,
                     Action = draft.Action?.Trim() ?? string.Empty,
                     IncludedOccurrenceKeys = (draft.IncludedOccurrenceKeys
+                            ?? new List<string>())
+                        .Where(item => !string.IsNullOrWhiteSpace(item))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList(),
+                    PhoneOccurrenceKeys = (draft.PhoneOccurrenceKeys
                             ?? new List<string>())
                         .Where(item => !string.IsNullOrWhiteSpace(item))
                         .Distinct(StringComparer.Ordinal)

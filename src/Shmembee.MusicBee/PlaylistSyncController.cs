@@ -838,11 +838,7 @@ namespace MusicBeePlugin
                                 : draft.Action == PlaylistLandingAction.TakePhone
                                     ? PlaylistSide.Phone
                                     : (PlaylistSide?)null,
-                            row.Diff.Occurrences.Select(item => new PlaylistOccurrenceDecision(
-                                item.Key,
-                                draft.IncludedOccurrenceKeys.Contains(item.Key)
-                                    ? OccurrenceChoice.Include
-                                    : OccurrenceChoice.Exclude)));
+                            draft.DecisionsFor(row.Diff.Occurrences));
                         SynchronizationApplyResult result = ApplyReviewedResult(
                             detail,
                             reviewed,
