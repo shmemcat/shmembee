@@ -106,6 +106,7 @@ namespace MusicBeePlugin
         private readonly TransportPhonePlaylistWriter phoneWriter;
         private readonly IPhonePlaylistCatalogReader phoneCatalogReader;
         private readonly IPhonePlaylistSnapshotReader? phoneSnapshotReader;
+        private readonly IPhoneMediaPathReader? phoneMediaPathReader;
         private readonly PostSyncPlaylistBackup? postSyncBackup;
         private readonly AcceptedBaselineStore baselineStore;
         private readonly SynchronizationHistoryStore history;
@@ -141,9 +142,11 @@ namespace MusicBeePlugin
                 settings.DeviceName,
                 settings.StorageName,
                 settings.PlaylistFolder,
-                TimeSpan.FromSeconds(settings.TimeoutSeconds));
+                TimeSpan.FromSeconds(settings.TimeoutSeconds),
+                mediaFolderPath: settings.PhoneMediaFolder);
             phoneCatalogReader = transport;
             phoneSnapshotReader = transport;
+            phoneMediaPathReader = transport;
             postSyncBackup = string.IsNullOrWhiteSpace(settings.PostSyncBackupPath)
                 ? null
                 : new PostSyncPlaylistBackup(
@@ -211,16 +214,20 @@ namespace MusicBeePlugin
             }
 
             IReadOnlyList<LibraryTrack> library = ReadResolutionLibrary(musicBeeState);
+            IReadOnlyDictionary<string, string> mediaPaths =
+                ResolvePhoneMediaPaths(library, musicBeeState.Entries);
             AcceptedBaseline? baseline = baselineStore.Load(context.PairId);
             IReadOnlyList<ResolvedHarnessTrack> phoneTracks = ResolvePhoneTracks(
                 phoneState,
                 library,
                 baseline,
-                musicBeeState.Entries);
+                musicBeeState.Entries,
+                settings.PhoneMediaFolder);
             IReadOnlyList<ResolvedHarnessTrack> musicBeeTracks = PairMusicBeeOccurrences(
                 musicBeeState.Entries,
                 phoneTracks,
-                baseline);
+                baseline,
+                mediaPaths);
             PlaylistDiff diff = PlaylistDiffEngine.Compare(
                 musicBeeTracks.Select(ToMusicBeeDiffEntry),
                 phoneTracks.Select(ToPhoneDiffEntry));
@@ -432,16 +439,33 @@ namespace MusicBeePlugin
             IReadOnlyList<LibraryTrack> library,
             IEnumerable<string> playlistEntries)
         {
-            var urls = new HashSet<string>(
-                library.Select(track => track.Url),
-                StringComparer.OrdinalIgnoreCase);
-            var result = new List<LibraryTrack>(library);
-            foreach (string url in playlistEntries)
+            return AddMissingPlaylistTracks(
+                library,
+                new HashSet<string>(
+                    library.Select(track => track.Url),
+                    StringComparer.OrdinalIgnoreCase),
+                playlistEntries);
+        }
+
+        private static IReadOnlyList<LibraryTrack> AddMissingPlaylistTracks(
+            IReadOnlyList<LibraryTrack> library,
+            ISet<string> libraryUrls,
+            IEnumerable<string> playlistEntries)
+        {
+            List<string> missing = playlistEntries
+                .Where(url => !libraryUrls.Contains(url))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (missing.Count == 0)
             {
-                if (urls.Add(url))
-                {
-                    result.Add(new LibraryTrack(url, url));
-                }
+                return library;
+            }
+
+            var result = new List<LibraryTrack>(library.Count + missing.Count);
+            result.AddRange(library);
+            foreach (string url in missing)
+            {
+                result.Add(new LibraryTrack(url, url));
             }
 
             return result;
@@ -451,20 +475,23 @@ namespace MusicBeePlugin
             PlaylistState phoneState,
             IReadOnlyList<LibraryTrack> library,
             AcceptedBaseline? baseline,
-            IEnumerable<string>? preferredUrls = null)
+            IEnumerable<string>? preferredUrls = null,
+            string mediaFolder = DesktopSettings.DefaultPhoneMediaFolder)
         {
             return ResolvePhoneTracks(
                 phoneState,
                 new TrackResolver().CreateIndex(library),
                 baseline,
-                preferredUrls);
+                preferredUrls,
+                mediaFolder);
         }
 
         private static IReadOnlyList<ResolvedHarnessTrack> ResolvePhoneTracks(
             PlaylistState phoneState,
             TrackResolverIndex resolver,
             AcceptedBaseline? baseline,
-            IEnumerable<string>? preferredUrls = null)
+            IEnumerable<string>? preferredUrls = null,
+            string mediaFolder = DesktopSettings.DefaultPhoneMediaFolder)
         {
             IReadOnlyDictionary<string, string>? approvedMappings = baseline == null
                 ? null
@@ -485,7 +512,7 @@ namespace MusicBeePlugin
             foreach (string path in phoneState.Entries)
             {
                 ResolutionResult result = resolver.Resolve(
-                    CreatePhoneReference(path),
+                    CreatePhoneReference(path, mediaFolder),
                     approvedMappings,
                     preferredUrlKeys);
                 if (result.Status != ResolutionStatus.Matched || result.Match == null)
@@ -507,6 +534,56 @@ namespace MusicBeePlugin
             }
 
             return resolved;
+        }
+
+        private IReadOnlyDictionary<string, string> ResolvePhoneMediaPaths(
+            IReadOnlyList<LibraryTrack> library,
+            IEnumerable<string>? preferredUrls = null)
+        {
+            return ResolvePhoneMediaPaths(
+                new TrackResolver().CreateIndex(library),
+                preferredUrls);
+        }
+
+        private IReadOnlyDictionary<string, string> ResolvePhoneMediaPaths(
+            TrackResolverIndex resolver,
+            IEnumerable<string>? preferredUrls = null)
+        {
+            if (phoneMediaPathReader == null)
+            {
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            HashSet<string>? preferredUrlKeys =
+                TrackResolverIndex.CreatePreferredUrlKeys(preferredUrls);
+            var matches = new Dictionary<string, HashSet<string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string path in phoneMediaPathReader.ReadMediaPaths())
+            {
+                ResolutionResult result = resolver.Resolve(
+                    CreatePhoneReference(path, settings.PhoneMediaFolder),
+                    approvedMappings: null,
+                    preferredUrlKeys);
+                if (result.Status != ResolutionStatus.Matched || result.Match == null)
+                {
+                    continue;
+                }
+
+                if (!matches.TryGetValue(result.Match.Url, out HashSet<string> paths))
+                {
+                    paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    matches.Add(result.Match.Url, paths);
+                }
+
+                paths.Add(TrackPathNormalizer.NormalizePhonePath(path));
+            }
+
+            return matches
+                .Where(item => item.Value.Count == 1)
+                .ToDictionary(
+                    item => item.Key,
+                    item => item.Value.Single(),
+                    StringComparer.OrdinalIgnoreCase);
         }
 
         private static PlaylistSideEntry ToMusicBeeDiffEntry(
@@ -545,7 +622,14 @@ namespace MusicBeePlugin
                 () => libraryReader.ReadPlaylists());
             IReadOnlyList<LibraryTrack> library = ToResolutionLibrary(
                 InvokeOnMusicBeeThread(() => libraryReader.ReadLibrary()));
+            var libraryUrls = new HashSet<string>(
+                library.Select(track => track.Url),
+                StringComparer.OrdinalIgnoreCase);
             TrackResolverIndex resolverIndex = new TrackResolver().CreateIndex(library);
+            IReadOnlyDictionary<string, string> mediaPaths =
+                ResolvePhoneMediaPaths(
+                    resolverIndex,
+                    playlists.SelectMany(item => item.TrackUrls));
             IReadOnlyList<PhonePlaylistContent>? phoneSnapshot =
                 phoneSnapshotReader?.ReadPlaylistSnapshot();
             IPhonePlaylistCatalogReader catalogReader = phoneSnapshot == null
@@ -579,7 +663,9 @@ namespace MusicBeePlugin
                 rows.Add(BuildHarnessPlaylistRow(
                     new PlaylistCatalogViewRow(catalog, null, catalog.Error),
                     library,
+                    libraryUrls,
                     resolverIndex,
+                    mediaPaths,
                     phoneStates));
             }
 
@@ -589,7 +675,9 @@ namespace MusicBeePlugin
         private HarnessPlaylistRow BuildHarnessPlaylistRow(
             PlaylistCatalogViewRow view,
             IReadOnlyList<LibraryTrack> resolutionLibrary,
+            ISet<string> libraryUrls,
             TrackResolverIndex resolverIndex,
+            IReadOnlyDictionary<string, string> mediaPaths,
             IDictionary<string, PlaylistState> phoneStates)
         {
             PlaylistCatalogRow catalog = view.CatalogRow;
@@ -623,6 +711,7 @@ namespace MusicBeePlugin
                     IReadOnlyList<LibraryTrack> effectiveLibrary =
                         AddMissingPlaylistTracks(
                             resolutionLibrary,
+                            libraryUrls,
                             musicBeeState.Entries);
                     TrackResolverIndex effectiveResolver =
                         effectiveLibrary.Count == resolutionLibrary.Count
@@ -632,12 +721,14 @@ namespace MusicBeePlugin
                         phoneState,
                         effectiveResolver,
                         baseline,
-                        musicBeeState.Entries);
+                        musicBeeState.Entries,
+                        settings.PhoneMediaFolder);
                     IReadOnlyList<ResolvedHarnessTrack> musicBeeTracks =
                         PairMusicBeeOccurrences(
                             musicBeeState.Entries,
                             phoneTracks,
-                            baseline);
+                            baseline,
+                            mediaPaths);
                     PlaylistDiff diff = PlaylistDiffEngine.Compare(
                         musicBeeTracks.Select(ToMusicBeeDiffEntry),
                         phoneTracks.Select(ToPhoneDiffEntry));
@@ -662,7 +753,8 @@ namespace MusicBeePlugin
                     IReadOnlyList<ResolvedHarnessTrack> tracks = PairMusicBeeOccurrences(
                         musicBeeState.Entries,
                         Array.Empty<ResolvedHarnessTrack>(),
-                        baselineStore.Load(catalog.RowId));
+                        baselineStore.Load(catalog.RowId),
+                        mediaPaths);
                     PlaylistDiff diff = PlaylistDiffEngine.Compare(
                         tracks.Select(ToMusicBeeDiffEntry),
                         Array.Empty<PlaylistSideEntry>());
@@ -689,7 +781,8 @@ namespace MusicBeePlugin
                     IReadOnlyList<ResolvedHarnessTrack> tracks = ResolvePhoneTracks(
                         phoneState,
                         resolverIndex,
-                        baselineStore.Load(catalog.RowId));
+                        baselineStore.Load(catalog.RowId),
+                        mediaFolder: settings.PhoneMediaFolder);
                     PlaylistDiff diff = PlaylistDiffEngine.Compare(
                         Array.Empty<PlaylistSideEntry>(),
                         tracks.Select(ToPhoneDiffEntry));
@@ -796,6 +889,7 @@ namespace MusicBeePlugin
         {
             var succeeded = new List<string>();
             var errors = new List<string>();
+            var warnings = new List<string>();
             IReadOnlyDictionary<string, HarnessPlaylistRow> currentRows =
                 RefreshPlaylistRows().ToDictionary(item => item.RowId, StringComparer.Ordinal);
             foreach (PlaylistReviewDraft draft in drafts)
@@ -860,6 +954,10 @@ namespace MusicBeePlugin
                     }
 
                     succeeded.Add(draft.RowId);
+                    if (details.StartsWith("WARNING:", StringComparison.Ordinal))
+                    {
+                        warnings.Add(draft.RowId + ": " + details);
+                    }
                 }
                 catch (Exception exception) when (!(exception is OperationCanceledException))
                 {
@@ -872,6 +970,12 @@ namespace MusicBeePlugin
             {
                 summary += Environment.NewLine + errors.Count
                     + " failed:" + Environment.NewLine + string.Join(Environment.NewLine, errors);
+            }
+            if (warnings.Count > 0)
+            {
+                summary += Environment.NewLine + warnings.Count
+                    + " warning(s):" + Environment.NewLine
+                    + string.Join(Environment.NewLine, warnings);
             }
 
             if (succeeded.Count > 0 && postSyncBackup != null)
@@ -913,22 +1017,46 @@ namespace MusicBeePlugin
                         cancellationToken);
                 }
 
-                PlaylistBuildResult built = PlaylistResultBuilder.TakeCompleteSide(
-                    row.Diff!,
-                    PlaylistSide.MusicBee,
-                    PlaylistSide.MusicBee);
-                if (built.IsBlocked)
+                IReadOnlyList<PlaylistOccurrence> ordered =
+                    OrderOccurrences(row.Diff!, PlaylistSide.MusicBee);
+                List<PlaylistSideEntry> available = ordered
+                    .Where(item => item.MusicBeeEntry?.ValueFor(PlaylistSide.Phone) != null)
+                    .Select(item => item.MusicBeeEntry!)
+                    .ToList();
+                List<PlaylistOccurrence> skipped = ordered
+                    .Where(item => item.MusicBeeEntry?.ValueFor(PlaylistSide.Phone) == null)
+                    .ToList();
+                if (available.Count == 0)
                 {
                     return SynchronizationLifecycleResult.Failed(
-                        string.Join(Environment.NewLine, built.BlockedReasons));
+                        "No tracks in this MusicBee playlist could be matched "
+                            + "to existing files in the configured phone media folder.");
                 }
 
-                return CreatePhonePlaylist(
+                SynchronizationLifecycleResult created = CreatePhonePlaylist(
                     row.PhoneBackingName!,
                     draft.PhoneChecksum,
-                    built.Entries.Select(item =>
+                    available.Select(item =>
                         item.ValueFor(PlaylistSide.Phone) ?? string.Empty).ToList(),
                     cancellationToken);
+                if (created.Status != SynchronizationApplyStatus.Succeeded
+                    || skipped.Count == 0)
+                {
+                    return created;
+                }
+
+                return SynchronizationLifecycleResult.Succeeded(
+                    "WARNING: Phone playlist created and verified, but "
+                        + skipped.Count
+                        + " unresolved track occurrence(s) were skipped: "
+                        + string.Join(
+                            "; ",
+                            skipped.Select(item =>
+                                item.MusicBeeEntry?.MusicBeeValue
+                                    ?? item.Track.Value)),
+                    created.MusicBeeState,
+                    created.PhoneState,
+                    created.CreatedMusicBeePlaylistUrl);
             }
 
             if (draft.Action == PlaylistLandingAction.TakeMusicBee)
@@ -951,6 +1079,22 @@ namespace MusicBeePlugin
                     phoneBuilt.Entries.Select(item =>
                         item.ValueFor(PlaylistSide.MusicBee) ?? string.Empty).ToList(),
                     cancellationToken);
+        }
+
+        private static IReadOnlyList<PlaylistOccurrence> OrderOccurrences(
+            PlaylistDiff diff,
+            PlaylistSide side)
+        {
+            IReadOnlyList<string> order = side == PlaylistSide.MusicBee
+                ? diff.MusicBeeOrder
+                : diff.PhoneOrder;
+            var byKey = diff.Occurrences.ToDictionary(
+                item => item.Key,
+                StringComparer.Ordinal);
+            return order
+                .Where(byKey.ContainsKey)
+                .Select(key => byKey[key])
+                .ToList();
         }
 
         private static PlaylistSideEntry ToDiffMusicBeeEntry(ResolvedHarnessTrack track) =>
@@ -1239,37 +1383,50 @@ namespace MusicBeePlugin
         private static IReadOnlyList<ResolvedHarnessTrack> PairMusicBeeOccurrences(
             IReadOnlyList<string> musicBeeUrls,
             IReadOnlyList<ResolvedHarnessTrack> phoneTracks,
-            AcceptedBaseline? baseline)
+            AcceptedBaseline? baseline,
+            IReadOnlyDictionary<string, string>? mediaPaths = null)
         {
             var available = new Dictionary<string, Queue<string>>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (ResolvedHarnessTrack track in phoneTracks
-                .Where(track => track.IsResolved)
-                .Concat(
-                baseline?.Tracks.Select(track => new ResolvedHarnessTrack(
-                    track.TrackId,
-                    track.MusicBeeUrl,
-                    track.PhonePath))
-                ?? Enumerable.Empty<ResolvedHarnessTrack>()))
+            if (mediaPaths == null)
             {
-                if (!available.TryGetValue(track.MusicBeeUrl, out Queue<string> paths))
+                foreach (ResolvedHarnessTrack track in phoneTracks
+                    .Where(track => track.IsResolved)
+                    .Concat(
+                    baseline?.Tracks.Select(track => new ResolvedHarnessTrack(
+                        track.TrackId,
+                        track.MusicBeeUrl,
+                        track.PhonePath))
+                    ?? Enumerable.Empty<ResolvedHarnessTrack>()))
                 {
-                    paths = new Queue<string>();
-                    available.Add(track.MusicBeeUrl, paths);
-                }
+                    if (!available.TryGetValue(
+                        track.MusicBeeUrl,
+                        out Queue<string> paths))
+                    {
+                        paths = new Queue<string>();
+                        available.Add(track.MusicBeeUrl, paths);
+                    }
 
-                paths.Enqueue(track.PhonePath);
+                    paths.Enqueue(track.PhonePath);
+                }
             }
 
             var result = new List<ResolvedHarnessTrack>();
+            IReadOnlyDictionary<string, string> reusableMediaPaths = mediaPaths == null
+                ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                : mediaPaths;
             foreach (string musicBeeUrl in musicBeeUrls)
             {
-                string phonePath = available.TryGetValue(
+                string phonePath = reusableMediaPaths.TryGetValue(
+                        musicBeeUrl,
+                        out string mediaPath)
+                    ? mediaPath
+                    : available.TryGetValue(
                         musicBeeUrl,
                         out Queue<string> paths)
-                    && paths.Count > 0
-                    ? paths.Dequeue()
-                    : string.Empty;
+                        && paths.Count > 0
+                        ? paths.Dequeue()
+                        : string.Empty;
                 result.Add(new ResolvedHarnessTrack(
                     musicBeeUrl,
                     musicBeeUrl,
@@ -1319,22 +1476,23 @@ namespace MusicBeePlugin
                 + ".";
         }
 
-        private static TrackReference CreatePhoneReference(string phonePath)
+        private static TrackReference CreatePhoneReference(
+            string phonePath,
+            string mediaFolder = DesktopSettings.DefaultPhoneMediaFolder)
         {
             string[] segments = phonePath
                 .Replace('\\', '/')
                 .Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
-            int musicIndex = Array.FindIndex(
-                segments,
-                segment => string.Equals(
-                    segment,
-                    "Music",
-                    StringComparison.OrdinalIgnoreCase));
-            string? artist = musicIndex >= 0 && musicIndex + 1 < segments.Length
-                ? segments[musicIndex + 1]
+            string[] rootSegments = (mediaFolder ?? string.Empty)
+                .Replace('\\', '/')
+                .Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+            int rootIndex = FindSegmentSequence(segments, rootSegments);
+            int contentIndex = rootIndex < 0 ? -1 : rootIndex + rootSegments.Length;
+            string? artist = contentIndex >= 0 && contentIndex < segments.Length
+                ? segments[contentIndex]
                 : null;
-            string? album = musicIndex >= 0 && musicIndex + 2 < segments.Length
-                ? segments[musicIndex + 2]
+            string? album = contentIndex >= 0 && contentIndex + 1 < segments.Length
+                ? segments[contentIndex + 1]
                 : null;
             string fileName = segments.Length == 0
                 ? phonePath
@@ -1382,6 +1540,39 @@ namespace MusicBeePlugin
                 album: album,
                 discNumber: discNumber,
                 trackNumber: trackNumber);
+        }
+
+        private static int FindSegmentSequence(
+            IReadOnlyList<string> segments,
+            IReadOnlyList<string> expected)
+        {
+            if (expected.Count == 0 || expected.Count > segments.Count)
+            {
+                return -1;
+            }
+
+            for (int start = 0; start <= segments.Count - expected.Count; start++)
+            {
+                bool matches = true;
+                for (int index = 0; index < expected.Count; index++)
+                {
+                    if (!string.Equals(
+                        segments[start + index],
+                        expected[index],
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                {
+                    return start;
+                }
+            }
+
+            return -1;
         }
 
         private PlaylistSnapshot Snapshot(

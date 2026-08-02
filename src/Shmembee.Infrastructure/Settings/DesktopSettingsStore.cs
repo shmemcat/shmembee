@@ -15,6 +15,7 @@ namespace Shmembee.Infrastructure.Settings
         public const string DefaultDeviceName = "MLE S24U";
         public const string DefaultStorageName = "Internal storage";
         public const string DefaultPlaylistFolder = "gmmp/playlists";
+        public const string DefaultPhoneMediaFolder = "Music";
         public const string DefaultPostSyncBackupPath =
             @"D:\My Documents\Shmembee Backups";
 
@@ -23,6 +24,7 @@ namespace Shmembee.Infrastructure.Settings
             DeviceName = DefaultDeviceName;
             StorageName = DefaultStorageName;
             PlaylistFolder = DefaultPlaylistFolder;
+            PhoneMediaFolder = DefaultPhoneMediaFolder;
             TimeoutSeconds = 300;
             DatabasePath = string.Empty;
             BackupPath = string.Empty;
@@ -56,6 +58,9 @@ namespace Shmembee.Infrastructure.Settings
 
         [DataMember(Order = 9)]
         public string PostSyncBackupPath { get; set; }
+
+        [DataMember(Order = 10)]
+        public string PhoneMediaFolder { get; set; }
     }
 
     [DataContract]
@@ -220,7 +225,12 @@ namespace Shmembee.Infrastructure.Settings
                 StorageName = OptionalOrDefault(
                     settings.StorageName,
                     DesktopSettings.DefaultStorageName),
-                PlaylistFolder = ValidFolderOrDefault(settings.PlaylistFolder),
+                PlaylistFolder = ValidFolderOrDefault(
+                    settings.PlaylistFolder,
+                    DesktopSettings.DefaultPlaylistFolder),
+                PhoneMediaFolder = ValidFolderOrDefault(
+                    settings.PhoneMediaFolder,
+                    DesktopSettings.DefaultPhoneMediaFolder),
                 TimeoutSeconds = settings.TimeoutSeconds < 5
                     || settings.TimeoutSeconds > 1800
                     ? 300
@@ -257,6 +267,7 @@ namespace Shmembee.Infrastructure.Settings
                         StorageName = legacy.StorageName ?? DesktopSettings.DefaultStorageName,
                         PlaylistFolder =
                             legacy.PlaylistFolder ?? DesktopSettings.DefaultPlaylistFolder,
+                        PhoneMediaFolder = DesktopSettings.DefaultPhoneMediaFolder,
                         TimeoutSeconds = legacy.TimeoutSeconds,
                         DatabasePath = legacy.DatabasePath ?? string.Empty,
                         BackupPath = legacy.BackupPath ?? string.Empty,
@@ -295,6 +306,8 @@ namespace Shmembee.Infrastructure.Settings
                         ?? DesktopSettings.DefaultStorageName,
                     PlaylistFolder = JsonString(json, "PlaylistFolder")
                         ?? DesktopSettings.DefaultPlaylistFolder,
+                    PhoneMediaFolder = JsonString(json, "PhoneMediaFolder")
+                        ?? DesktopSettings.DefaultPhoneMediaFolder,
                     DatabasePath = JsonString(json, "DatabasePath") ?? string.Empty,
                     BackupPath = JsonString(json, "BackupPath") ?? string.Empty
                 };
@@ -431,21 +444,28 @@ namespace Shmembee.Infrastructure.Settings
         private static string OptionalOrDefault(string? value, string defaultValue) =>
             string.IsNullOrWhiteSpace(value) ? defaultValue : value!.Trim();
 
-        private static string ValidFolderOrDefault(string? value)
+        private static string ValidFolderOrDefault(
+            string? value,
+            string defaultValue)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
-                return DesktopSettings.DefaultPlaylistFolder;
+                return defaultValue;
             }
 
             string folder = value!.Trim().Replace('\\', '/').Trim('/');
             if (folder.Length == 0
+                || folder == "."
+                || folder.IndexOf(':') >= 0
+                || folder.StartsWith("./", StringComparison.Ordinal)
+                || folder.EndsWith("/.", StringComparison.Ordinal)
+                || folder.IndexOf("/./", StringComparison.Ordinal) >= 0
                 || folder.StartsWith("../", StringComparison.Ordinal)
                 || folder.EndsWith("/..", StringComparison.Ordinal)
                 || folder.IndexOf("/../", StringComparison.Ordinal) >= 0
                 || Path.IsPathRooted(folder))
             {
-                return DesktopSettings.DefaultPlaylistFolder;
+                return defaultValue;
             }
 
             return folder;

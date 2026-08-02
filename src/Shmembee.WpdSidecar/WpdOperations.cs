@@ -34,6 +34,10 @@ namespace Shmembee.WpdSidecar
             Key(new Guid("E81E79BE-34F0-41BF-B53F-F1A06AE87842"), 0);
         private static readonly Guid GenericFile =
             new Guid("0085E0A6-8D34-45D7-BC5C-447E59C73D48");
+        private static readonly Guid FolderContentType =
+            new Guid("27E2E392-A111-48E0-AB0C-E17705A05F85");
+        private const int MaximumMediaFolderDepth = 64;
+        private const int MaximumMediaObjectCount = 250000;
         private static readonly Guid UnspecifiedFormat = Guid.Empty;
 
         private string stage;
@@ -60,6 +64,13 @@ namespace Shmembee.WpdSidecar
                             break;
                         case "snapshot-playlists":
                             SnapshotPlaylists(session, response.FolderId, response);
+                            break;
+                        case "snapshot-media-paths":
+                            SnapshotMediaPaths(
+                                session,
+                                response.FolderId,
+                                request.Folder,
+                                response);
                             break;
                         case "read":
                             Read(session, response.FolderId, request.Name, response);
@@ -153,6 +164,109 @@ namespace Shmembee.WpdSidecar
 
             response.Playlists = playlists.ToArray();
         }
+
+        private void SnapshotMediaPaths(
+            WpdSession session,
+            string folderId,
+            string folderPath,
+            OperationResponse response)
+        {
+            stage = "snapshot-media-paths";
+            string normalizedRoot = NormalizeRelativePath(folderPath);
+            var paths = new List<string>();
+            var visitedFolders = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Stack<MediaFolder>();
+            pending.Push(new MediaFolder(folderId, normalizedRoot, 0));
+            int objectCount = 0;
+            while (pending.Count > 0)
+            {
+                MediaFolder folder = pending.Pop();
+                if (folder.Depth > MaximumMediaFolderDepth)
+                {
+                    throw new InvalidOperationException(
+                        "The phone media folder exceeds the maximum supported depth of "
+                            + MaximumMediaFolderDepth + ".");
+                }
+
+                if (!visitedFolders.Add(folder.ObjectId))
+                {
+                    throw new InvalidOperationException(
+                        "A cycle was detected while enumerating WPD folder "
+                            + folder.ObjectId + ".");
+                }
+
+                foreach (string objectId in session.Children(folder.ObjectId))
+                {
+                    objectCount++;
+                    if (objectCount > MaximumMediaObjectCount)
+                    {
+                        throw new InvalidOperationException(
+                            "The phone media folder contains more than "
+                                + MaximumMediaObjectCount + " objects.");
+                    }
+
+                    WpdSession.WpdObjectInfo info = session.Info(objectId);
+                    string name = info.Name;
+                    if (!IsSafePathSegment(name))
+                    {
+                        throw new InvalidOperationException(
+                            "WPD object '" + objectId
+                                + "' has an unsafe name: " + name);
+                    }
+
+                    string relativePath = folder.RelativePath.Length == 0
+                        ? name
+                        : folder.RelativePath + "/" + name;
+                    if (info.IsFolder)
+                    {
+                        pending.Push(new MediaFolder(
+                            objectId,
+                            relativePath,
+                            folder.Depth + 1));
+                    }
+                    else
+                    {
+                        paths.Add(relativePath);
+                    }
+                }
+            }
+            response.MediaPathsBase64 = paths
+                .Select(path => Convert.ToBase64String(Encoding.UTF8.GetBytes(path)))
+                .ToArray();
+        }
+
+        private sealed class MediaFolder
+        {
+            public MediaFolder(string objectId, string relativePath, int depth)
+            {
+                ObjectId = objectId;
+                RelativePath = relativePath;
+                Depth = depth;
+            }
+
+            public string ObjectId { get; }
+            public string RelativePath { get; }
+            public int Depth { get; }
+        }
+
+        private static string NormalizeRelativePath(string path)
+        {
+            string[] segments = (path ?? string.Empty)
+                .Split(FolderSeparators, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Any(segment => !IsSafePathSegment(segment)))
+            {
+                throw new ArgumentException("Folder contains an unsafe path segment.");
+            }
+
+            return string.Join("/", segments);
+        }
+
+        private static bool IsSafePathSegment(string value) =>
+            !string.IsNullOrWhiteSpace(value)
+            && value != "."
+            && value != ".."
+            && value.IndexOfAny(FolderSeparators) < 0
+            && value.IndexOf(':') < 0;
 
         private void Replace(WpdSession session, string folderId, string name,
             byte[] bytes, OperationResponse response)
@@ -319,6 +433,7 @@ namespace Shmembee.WpdSidecar
                 throw new ArgumentException("Storage is required.");
             if (request.Operation != "probe"
                 && request.Operation != "snapshot-playlists"
+                && request.Operation != "snapshot-media-paths"
                 && string.IsNullOrWhiteSpace(request.Name))
                 throw new ArgumentException("Name is required.");
             if (request.Operation == "replace" && request.ContentBase64 == null)
@@ -407,6 +522,26 @@ namespace Shmembee.WpdSidecar
                 }
             }
 
+            public WpdObjectInfo Info(string objectId)
+            {
+                IPortableDeviceKeyCollection keys =
+                    (IPortableDeviceKeyCollection)new PortableDeviceKeyCollection();
+                PROPERTYKEY fileKey = ObjectOriginalFileName;
+                PROPERTYKEY nameKey = ObjectName;
+                PROPERTYKEY contentTypeKey = ObjectContentType;
+                keys.Add(in fileKey);
+                keys.Add(in nameKey);
+                keys.Add(in contentTypeKey);
+                IPortableDeviceValues values = properties.GetValues(objectId, keys);
+                string name;
+                try { name = values.GetStringValue(in fileKey); }
+                catch (COMException)
+                { name = values.GetStringValue(in nameKey); }
+                return new WpdObjectInfo(
+                    name,
+                    values.GetGuidValue(in contentTypeKey) == FolderContentType);
+            }
+
             public string Name(string objectId)
             {
                 IPortableDeviceKeyCollection keys =
@@ -419,6 +554,18 @@ namespace Shmembee.WpdSidecar
                 try { return values.GetStringValue(in fileKey); }
                 catch (COMException)
                 { return values.GetStringValue(in nameKey); }
+            }
+
+            public sealed class WpdObjectInfo
+            {
+                public WpdObjectInfo(string name, bool isFolder)
+                {
+                    Name = name;
+                    IsFolder = isFolder;
+                }
+
+                public string Name { get; }
+                public bool IsFolder { get; }
             }
 
             public byte[] Read(string objectId)

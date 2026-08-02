@@ -22,6 +22,11 @@ namespace Shmembee.Application.Ports
         IReadOnlyList<PhonePlaylistContent> ReadPlaylistSnapshot();
     }
 
+    public interface IPhoneMediaPathReader
+    {
+        IReadOnlyList<string> ReadMediaPaths();
+    }
+
     public sealed class PhonePlaylistContent
     {
         public PhonePlaylistContent(

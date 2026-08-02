@@ -23,6 +23,7 @@ public sealed class Phase4BackendTests : IDisposable
         Assert.Equal("MLE S24U", settings.DeviceName);
         Assert.Equal("Internal storage", settings.StorageName);
         Assert.Equal("gmmp/playlists", settings.PlaylistFolder);
+        Assert.Equal("Music", settings.PhoneMediaFolder);
         Assert.Equal(
             @"D:\My Documents\Shmembee Backups",
             settings.PostSyncBackupPath);
@@ -39,6 +40,7 @@ public sealed class Phase4BackendTests : IDisposable
             DeviceName = " Phone ",
             StorageName = " Storage ",
             PlaylistFolder = @"custom\playlists",
+            PhoneMediaFolder = @"Audio\Synced",
             PostSyncBackupPath = @" D:\Playlist Archives ",
             PlaylistAssociations =
             [
@@ -53,6 +55,7 @@ public sealed class Phase4BackendTests : IDisposable
         Assert.Equal("Phone", loaded.DeviceName);
         Assert.Equal("Storage", loaded.StorageName);
         Assert.Equal("custom/playlists", loaded.PlaylistFolder);
+        Assert.Equal("Audio/Synced", loaded.PhoneMediaFolder);
         Assert.Equal(@"D:\Playlist Archives", loaded.PostSyncBackupPath);
         PlaylistAssociation association = Assert.Single(loaded.PlaylistAssociations);
         Assert.Equal("playlist-1", association.PlaylistId);
@@ -69,6 +72,22 @@ public sealed class Phase4BackendTests : IDisposable
         DesktopSettings settings = new DesktopSettingsStore(path).Load();
 
         Assert.Equal(DesktopSettings.DefaultDeviceName, settings.DeviceName);
+    }
+
+    [Theory]
+    [InlineData(".")]
+    [InlineData("Music/./Synced")]
+    [InlineData("Music:Synced")]
+    [InlineData("../Music")]
+    public void UnsafePhoneMediaFoldersFallBackToDefault(string folder)
+    {
+        string path = Path.Combine(temporaryDirectory, "settings.json");
+        var store = new DesktopSettingsStore(path);
+        store.Save(new DesktopSettings { PhoneMediaFolder = folder });
+
+        DesktopSettings loaded = store.Load();
+
+        Assert.Equal(DesktopSettings.DefaultPhoneMediaFolder, loaded.PhoneMediaFolder);
     }
 
     [Fact]

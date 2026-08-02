@@ -233,6 +233,127 @@ public sealed class WpdSidecarPlaylistTransportTests
             });
     }
 
+    [Fact]
+    public void MediaPathSnapshotUsesConfiguredRootAndNormalizesResponse()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            JsonElement root = document.RootElement;
+            Assert.Equal(
+                "snapshot-media-paths",
+                root.GetProperty("Operation").GetString());
+            Assert.Equal("Music/Library", root.GetProperty("Folder").GetString());
+            Assert.True(root.GetProperty("Name").ValueKind == JsonValueKind.Null);
+            Assert.True(root.GetProperty("ContentBase64").ValueKind == JsonValueKind.Null);
+            string operationId = root.GetProperty("OperationId").GetString()!;
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = operationId,
+                    MediaPaths = new[]
+                    {
+                        @"Music\Library\Artist\Track.mp3",
+                        "Music/Library/Artist/Track.mp3",
+                        " Music/Library/Other.flac ",
+                        "Music/Library/Cover.jpg",
+                        "../unsafe.mp3",
+                        "C:/unsafe.mp3",
+                        ""
+                    }
+                }),
+                string.Empty);
+        });
+
+        IReadOnlyList<string> result = CreateTransport(
+            runner,
+            "Music/Library").ReadMediaPaths();
+
+        Assert.Equal(1, runner.CallCount);
+        Assert.Equal(
+            new[]
+            {
+                "Music/Library/Artist/Track.mp3",
+                "Music/Library/Other.flac"
+            },
+            result);
+    }
+
+    [Fact]
+    public void MediaPathSnapshotRequiresConfiguredRootWithoutStartingProcess()
+    {
+        var runner = new RecordingRunner(_ => throw new InvalidOperationException());
+
+        Assert.Throws<InvalidOperationException>(
+            () => CreateTransport(runner).ReadMediaPaths());
+        Assert.Equal(0, runner.CallCount);
+    }
+
+    [Fact]
+    public void MediaPathSnapshotSupportsLargeObjectGraphs()
+    {
+        string[] paths = Enumerable.Range(0, 70000)
+            .Select(index => $"Music/Artist/Album/{index:D5}.mp3")
+            .ToArray();
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            string operationId = document.RootElement
+                .GetProperty("OperationId")
+                .GetString()!;
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = operationId,
+                    MediaPaths = paths
+                }),
+                string.Empty);
+        });
+
+        IReadOnlyList<string> result = CreateTransport(
+            runner,
+            "Music").ReadMediaPaths();
+
+        Assert.Equal(paths.Length, result.Count);
+        Assert.Equal(paths[0], result[0]);
+        Assert.Equal(paths[^1], result[^1]);
+    }
+
+    [Fact]
+    public void MediaPathSnapshotDecodesQuotedPhoneNames()
+    {
+        const string path = "Music/Artist/Album \"Dusk\"/01 - Song.mp3";
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            string operationId = document.RootElement
+                .GetProperty("OperationId")
+                .GetString()!;
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = operationId,
+                    MediaPathsBase64 = new[]
+                    {
+                        Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(path))
+                    }
+                }),
+                string.Empty);
+        });
+
+        string actual = Assert.Single(CreateTransport(
+            runner,
+            "Music").ReadMediaPaths());
+
+        Assert.Equal(path, actual);
+    }
+
     [Theory]
     [InlineData("../playlist.m3u")]
     [InlineData("folder/playlist.m3u")]
@@ -245,14 +366,16 @@ public sealed class WpdSidecarPlaylistTransportTests
     }
 
     private static WpdSidecarPlaylistTransport CreateTransport(
-        IWpdSidecarProcessRunner runner) =>
+        IWpdSidecarProcessRunner runner,
+        string? mediaFolderPath = null) =>
         new(
             "sidecar.exe",
             "MLE S24U",
             "Internal storage",
             "gmmp/playlists",
             TimeSpan.FromSeconds(1),
-            runner);
+            runner,
+            mediaFolderPath);
 
     private static WpdSidecarProcessResult Success(
         string operationId,

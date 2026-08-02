@@ -39,6 +39,7 @@ namespace MusicBeePlugin
         private readonly TextBox deviceNameText = new TextBox();
         private readonly TextBox storageNameText = new TextBox();
         private readonly TextBox playlistFolderText = new TextBox();
+        private readonly TextBox phoneMediaFolderText = new TextBox();
         private readonly TextBox postSyncBackupPathText = new TextBox();
         private readonly string storagePath;
         private readonly ReviewedPlaylistDraftStore? reviewDraftStore;
@@ -823,16 +824,21 @@ namespace MusicBeePlugin
                 "PlaylistFolder",
                 controller.Settings.PlaylistFolder);
             InitializeSettingText(
+                phoneMediaFolderText,
+                "PhoneMediaFolder",
+                controller.Settings.PhoneMediaFolder);
+            InitializeSettingText(
                 postSyncBackupPathText,
                 "PostSyncBackupPath",
                 controller.Settings.PostSyncBackupPath);
             panel.Controls.Add(CreateField("Device name", deviceNameText), 0, 2);
             panel.Controls.Add(CreateField("Storage", storageNameText), 0, 3);
             panel.Controls.Add(CreateField("Playlist folder", playlistFolderText), 0, 4);
+            panel.Controls.Add(CreateField("Phone media folder", phoneMediaFolderText), 0, 5);
             panel.Controls.Add(
                 CreateField("Post-sync M3U backup folder", postSyncBackupPathText),
                 0,
-                5);
+                6);
             var save = new Button
             {
                 Text = "Save settings",
@@ -842,7 +848,7 @@ namespace MusicBeePlugin
                 Margin = new Padding(0, 14, 0, 0)
             };
             save.Click += (_, _) => SaveSettings();
-            panel.Controls.Add(save, 0, 6);
+            panel.Controls.Add(save, 0, 7);
             page.Controls.Add(panel);
             return page;
         }
@@ -1021,7 +1027,8 @@ namespace MusicBeePlugin
                         settings.DeviceName,
                         settings.StorageName,
                         settings.PlaylistFolder,
-                        TimeSpan.FromSeconds(settings.TimeoutSeconds));
+                        TimeSpan.FromSeconds(settings.TimeoutSeconds),
+                        mediaFolderPath: settings.PhoneMediaFolder);
                     return new SetupDiagnosticService(
                         storagePath,
                         string.IsNullOrWhiteSpace(settings.DatabasePath)
@@ -1072,6 +1079,7 @@ namespace MusicBeePlugin
             settings.DeviceName = deviceNameText.Text;
             settings.StorageName = storageNameText.Text;
             settings.PlaylistFolder = playlistFolderText.Text;
+            settings.PhoneMediaFolder = phoneMediaFolderText.Text;
             settings.PostSyncBackupPath = postSyncBackupPathText.Text;
             new DesktopSettingsStore(
                 System.IO.Path.Combine(storagePath, "settings.json")).Save(settings);

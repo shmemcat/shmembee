@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.Serialization.Json;
 using System.Text;
 using Shmembee.Application.Ports;
@@ -12,12 +13,14 @@ namespace Shmembee.Windows
     public sealed class WpdSidecarPlaylistTransport :
         IPlaylistFileTransport,
         IPhonePlaylistCatalogReader,
-        IPhonePlaylistSnapshotReader
+        IPhonePlaylistSnapshotReader,
+        IPhoneMediaPathReader
     {
         private readonly string sidecarPath;
         private readonly string deviceName;
         private readonly string storageName;
         private readonly string folderPath;
+        private readonly string mediaFolderPath;
         private readonly TimeSpan timeout;
         private readonly IWpdSidecarProcessRunner processRunner;
 
@@ -27,12 +30,16 @@ namespace Shmembee.Windows
             string storageName,
             string folderPath,
             TimeSpan? timeout = null,
-            IWpdSidecarProcessRunner processRunner = null)
+            IWpdSidecarProcessRunner processRunner = null,
+            string mediaFolderPath = null)
         {
             this.sidecarPath = Require(sidecarPath, nameof(sidecarPath));
             this.deviceName = Require(deviceName, nameof(deviceName));
             this.storageName = Require(storageName, nameof(storageName));
             this.folderPath = Require(folderPath, nameof(folderPath));
+            this.mediaFolderPath = string.IsNullOrWhiteSpace(mediaFolderPath)
+                ? null
+                : mediaFolderPath.Trim();
             this.timeout = timeout ?? TimeSpan.FromSeconds(30);
             if (this.timeout <= TimeSpan.Zero)
             {
@@ -60,6 +67,23 @@ namespace Shmembee.Windows
                 null,
                 false);
             return response.DecodePlaylistSnapshot();
+        }
+
+        public IReadOnlyList<string> ReadMediaPaths()
+        {
+            if (mediaFolderPath == null)
+            {
+                throw new InvalidOperationException(
+                    "A media folder is required to read phone media paths.");
+            }
+
+            WpdSidecarResponse response = Invoke(
+                "snapshot-media-paths",
+                null,
+                null,
+                false,
+                mediaFolderPath);
+            return response.DecodeMediaPaths();
         }
 
         public byte[] Read(string backingName)
@@ -113,7 +137,8 @@ namespace Shmembee.Windows
             string operation,
             string backingName,
             string contentBase64,
-            bool allowNotFound)
+            bool allowNotFound,
+            string requestedFolder = null)
         {
             string operationId = Guid.NewGuid().ToString("N");
             var request = new WpdSidecarRequest
@@ -123,7 +148,7 @@ namespace Shmembee.Windows
                 Operation = operation,
                 Device = deviceName,
                 Storage = storageName,
-                Folder = folderPath,
+                Folder = requestedFolder ?? folderPath,
                 Name = backingName,
                 ContentBase64 = contentBase64
             };
@@ -317,7 +342,13 @@ namespace Shmembee.Windows
         {
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(value)))
             {
-                return (T)new DataContractJsonSerializer(typeof(T)).ReadObject(stream);
+                var settings = new DataContractJsonSerializerSettings
+                {
+                    MaxItemsInObjectGraph = 1000000
+                };
+                return (T)new DataContractJsonSerializer(
+                    typeof(T),
+                    settings).ReadObject(stream);
             }
         }
     }
@@ -426,6 +457,12 @@ namespace Shmembee.Windows
 
     public sealed class WpdSidecarResponse
     {
+        private static readonly string[] SupportedMediaExtensions =
+        {
+            ".aac", ".aif", ".aiff", ".alac", ".ape", ".dsf", ".flac",
+            ".m4a", ".m4b", ".mp3", ".mp4", ".mpc", ".ogg", ".opus",
+            ".wav", ".wma", ".wv"
+        };
         public int ProtocolVersion { get; set; }
         public string OperationId { get; set; }
         public bool Success { get; set; }
@@ -445,6 +482,8 @@ namespace Shmembee.Windows
         public int? ByteCount { get; set; }
         public bool? RenameSupported { get; set; }
         public string[] Objects { get; set; }
+        public string[] MediaPaths { get; set; }
+        public string[] MediaPathsBase64 { get; set; }
         public WpdSidecarPlaylistContent[] Playlists { get; set; }
 
         public IReadOnlyList<PhonePlaylistFile> EnumeratePlaylists()
@@ -542,6 +581,73 @@ namespace Shmembee.Windows
             }
 
             return result;
+        }
+
+        public IReadOnlyList<string> DecodeMediaPaths()
+        {
+            var result = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            IEnumerable<string> values = MediaPathsBase64 != null
+                ? MediaPathsBase64.Select(DecodeUtf8Base64)
+                : MediaPaths ?? Array.Empty<string>();
+            foreach (string value in values)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                string normalized = value.Trim().Replace('\\', '/').Trim('/');
+                string extension = Path.GetExtension(normalized);
+                if (normalized.Length == 0
+                    || normalized == "."
+                    || normalized == ".."
+                    || normalized.StartsWith("../", StringComparison.Ordinal)
+                    || normalized.Contains("/../")
+                    || Path.IsPathRooted(normalized)
+                    || ContainsColon(normalized)
+                    || !IsSupportedMediaExtension(extension)
+                    || !seen.Add(normalized))
+                {
+                    continue;
+                }
+
+                result.Add(normalized);
+            }
+
+            return result;
+        }
+
+        private static string DecodeUtf8Base64(string value)
+        {
+            try
+            {
+                return Encoding.UTF8.GetString(Convert.FromBase64String(value ?? string.Empty));
+            }
+            catch (FormatException exception)
+            {
+                throw new InvalidDataException(
+                    "The WPD sidecar returned an invalid encoded media path.",
+                    exception);
+            }
+        }
+
+        private static bool IsSupportedMediaExtension(string extension) =>
+            SupportedMediaExtensions.Contains(
+                extension,
+                StringComparer.OrdinalIgnoreCase);
+
+        private static bool ContainsColon(string value)
+        {
+            foreach (char character in value)
+            {
+                if (character == ':')
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 

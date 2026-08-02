@@ -9,9 +9,6 @@
     <NoWarn>$(NoWarn);CA1861</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="System.Web.Extensions" />
-  </ItemGroup>
-  <ItemGroup>
     <PackageReference Include="Vanara.PInvoke.PortableDeviceApi" />
   </ItemGroup>
 </Project>
