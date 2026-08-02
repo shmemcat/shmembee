@@ -42,6 +42,23 @@ public sealed class Phase2Tests
         Assert.Equal(98, playlist.Entries[0].DurationSeconds);
     }
 
+    [Theory]
+    [InlineData("1-01 - Trinkets.mp3", "Trinkets", 1, 1)]
+    [InlineData("1-01 Trinkets.mp3", "Trinkets", 1, 1)]
+    [InlineData("17 - Twinz.mp3", "Twinz", null, 17)]
+    public void PhoneFileNameParserSupportsCurrentAndLegacyTemplates(
+        string fileName,
+        string expectedTitle,
+        int? expectedDisc,
+        int? expectedTrack)
+    {
+        PhoneFileNameMetadata parsed = PhoneFileNameParser.Parse(fileName);
+
+        Assert.Equal(expectedTitle, parsed.Title);
+        Assert.Equal(expectedDisc, parsed.DiscNumber);
+        Assert.Equal(expectedTrack, parsed.TrackNumber);
+    }
+
     [Fact]
     public void ResolverUsesApprovedMappingBeforeAmbiguousFilename()
     {

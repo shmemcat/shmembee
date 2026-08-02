@@ -50,11 +50,14 @@ namespace Shmembee.Application.Synchronization
         public PlaylistState(
             bool exists,
             string checksum,
-            IReadOnlyList<string> entries)
+            IReadOnlyList<string> entries,
+            IReadOnlyList<PlaylistEntryMetadata>? entryMetadata = null)
         {
             Exists = exists;
             Checksum = checksum;
             Entries = entries;
+            EntryMetadata = entryMetadata
+                ?? Array.Empty<PlaylistEntryMetadata>();
         }
 
         public bool Exists { get; }
@@ -62,6 +65,27 @@ namespace Shmembee.Application.Synchronization
         public string Checksum { get; }
 
         public IReadOnlyList<string> Entries { get; }
+
+        public IReadOnlyList<PlaylistEntryMetadata> EntryMetadata { get; }
+    }
+
+    public sealed class PlaylistEntryMetadata
+    {
+        public PlaylistEntryMetadata(
+            string path,
+            string? title = null,
+            int? durationSeconds = null)
+        {
+            Path = path;
+            Title = title;
+            DurationSeconds = durationSeconds;
+        }
+
+        public string Path { get; }
+
+        public string? Title { get; }
+
+        public int? DurationSeconds { get; }
     }
 
     public sealed class PlaylistBackup

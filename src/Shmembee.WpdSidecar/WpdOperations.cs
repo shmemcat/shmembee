@@ -16,6 +16,8 @@ namespace Shmembee.WpdSidecar
     internal sealed class WpdOperations
     {
         private const string DeviceRoot = "DEVICE";
+        private const string BackupRootName = "backup";
+        private const string BackupFolderPrefix = "shmembee-";
         private const uint DeleteNoRecursion = 0;
         private static readonly char[] FolderSeparators = { '/', '\\' };
         private static PROPERTYKEY ObjectName =
@@ -36,6 +38,8 @@ namespace Shmembee.WpdSidecar
             new Guid("0085E0A6-8D34-45D7-BC5C-447E59C73D48");
         private static readonly Guid FolderContentType =
             new Guid("27E2E392-A111-48E0-AB0C-E17705A05F85");
+        private static readonly Guid PropertiesOnlyFormat =
+            new Guid("30000000-AE6C-4804-98BA-C57B46965FE7");
         private const int MaximumMediaFolderDepth = 64;
         private const int MaximumMediaObjectCount = 250000;
         private static readonly Guid UnspecifiedFormat = Guid.Empty;
@@ -81,6 +85,20 @@ namespace Shmembee.WpdSidecar
                             break;
                         case "delete":
                             Delete(session, response.FolderId, request.Name, response);
+                            break;
+                        case "create-playlist-backup":
+                            CreatePlaylistBackup(
+                                session,
+                                response.FolderId,
+                                response);
+                            break;
+                        case "delete-playlist-backup":
+                            DeletePlaylistBackup(
+                                session,
+                                response.FolderId,
+                                request.BackupFolderName,
+                                request.CopiedNames,
+                                response);
                             break;
                         default:
                             throw new ArgumentException("Unknown operation: " + request.Operation);
@@ -163,6 +181,216 @@ namespace Shmembee.WpdSidecar
             }
 
             response.Playlists = playlists.ToArray();
+        }
+
+        private void CreatePlaylistBackup(
+            WpdSession session,
+            string playlistFolderId,
+            OperationResponse response)
+        {
+            stage = "snapshot-backup-source";
+            var snapshot = new List<BackupFile>();
+            var seenNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string objectId in session.Children(playlistFolderId))
+            {
+                string name = session.Name(objectId);
+                if (!IsPlaylistFileName(name))
+                {
+                    continue;
+                }
+
+                if (!seenNames.Add(name))
+                {
+                    throw new InvalidOperationException(
+                        "Multiple direct-child playlist objects named '"
+                            + name + "' cannot be backed up safely.");
+                }
+
+                snapshot.Add(new BackupFile(name, ReadById(session, objectId)));
+            }
+
+            string backupRootId = null;
+            string backupFolderId = null;
+            var copiedNames = new List<string>();
+            try
+            {
+                stage = "create-backup-root";
+                backupRootId = ResolveOptionalExact(
+                    session,
+                    playlistFolderId,
+                    BackupRootName);
+                if (backupRootId == null)
+                {
+                    backupRootId = session.CreateFolder(
+                        playlistFolderId,
+                        BackupRootName);
+                }
+                else if (!session.Info(backupRootId).IsFolder)
+                {
+                    throw new InvalidOperationException(
+                        "The fixed backup root exists but is not a folder.");
+                }
+
+                stage = "create-backup-folder";
+                response.BackupFolderName = BackupFolderPrefix
+                    + DateTime.UtcNow.ToString(
+                        "yyyyMMdd-HHmmss-fffffff",
+                        System.Globalization.CultureInfo.InvariantCulture)
+                    + "-"
+                    + Guid.NewGuid().ToString("N");
+                if (ResolveOptionalExact(
+                    session,
+                    backupRootId,
+                    response.BackupFolderName) != null)
+                {
+                    throw new InvalidOperationException(
+                        "The generated backup folder already exists.");
+                }
+                backupFolderId = session.CreateFolder(
+                    backupRootId,
+                    response.BackupFolderName);
+
+                foreach (BackupFile file in snapshot)
+                {
+                    stage = "copy-backup-file";
+                    string copiedId = session.Create(
+                        backupFolderId,
+                        file.Name,
+                        file.Bytes);
+                    copiedNames.Add(file.Name);
+                    stage = "verify-backup-file";
+                    Verify(session, copiedId, file.Bytes);
+                    string resolvedId = ResolveExact(
+                        session,
+                        backupFolderId,
+                        file.Name);
+                    if (!string.Equals(copiedId, resolvedId, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            "Backup readback resolved a different object.");
+                    }
+                }
+
+                response.CopiedNames = copiedNames.ToArray();
+            }
+            catch
+            {
+                CleanupBackup(
+                    session,
+                    playlistFolderId,
+                    backupRootId,
+                    backupFolderId,
+                    copiedNames,
+                    preservePrimaryFailure: true);
+                throw;
+            }
+        }
+
+        private void DeletePlaylistBackup(
+            WpdSession session,
+            string playlistFolderId,
+            string backupFolderName,
+            string[] copiedNames,
+            OperationResponse response)
+        {
+            ValidateBackupHandle(backupFolderName, copiedNames);
+            stage = "resolve-backup-root";
+            string backupRootId = ResolveOptionalExact(
+                session,
+                playlistFolderId,
+                BackupRootName);
+            if (backupRootId == null)
+            {
+                return;
+            }
+            if (!session.Info(backupRootId).IsFolder)
+            {
+                throw new InvalidOperationException(
+                    "The fixed backup root is not a folder.");
+            }
+
+            stage = "resolve-backup-folder";
+            string backupFolderId = ResolveOptionalExact(
+                session,
+                backupRootId,
+                backupFolderName);
+            if (backupFolderId == null)
+            {
+                return;
+            }
+            if (!session.Info(backupFolderId).IsFolder)
+            {
+                throw new InvalidOperationException(
+                    "The requested backup object is not a folder.");
+            }
+
+            CleanupBackup(
+                session,
+                playlistFolderId,
+                backupRootId,
+                backupFolderId,
+                copiedNames,
+                preservePrimaryFailure: false);
+            response.BackupFolderName = backupFolderName;
+            response.CopiedNames = copiedNames;
+        }
+
+        private void CleanupBackup(
+            WpdSession session,
+            string playlistFolderId,
+            string backupRootId,
+            string backupFolderId,
+            IEnumerable<string> copiedNames,
+            bool preservePrimaryFailure)
+        {
+            try
+            {
+                if (backupFolderId != null)
+                {
+                    foreach (string name in copiedNames)
+                    {
+                        stage = "delete-backup-file";
+                        string objectId = ResolveOptionalExact(
+                            session,
+                            backupFolderId,
+                            name);
+                        if (objectId != null)
+                        {
+                            session.Delete(objectId);
+                        }
+                    }
+
+                    stage = "delete-backup-folder";
+                    if (!session.Children(backupFolderId).Any())
+                    {
+                        session.Delete(backupFolderId);
+                    }
+                    else if (!preservePrimaryFailure)
+                    {
+                        throw new InvalidOperationException(
+                            "The backup folder contains unexpected objects and was preserved.");
+                    }
+                }
+
+            }
+            catch when (preservePrimaryFailure)
+            {
+                // Keep the original creation failure. Cleanup never traverses or
+                // deletes anything outside the newly-created backup folder.
+            }
+        }
+
+        private sealed class BackupFile
+        {
+            public BackupFile(string name, byte[] bytes)
+            {
+                Name = name;
+                Bytes = bytes;
+            }
+
+            public string Name { get; }
+
+            public byte[] Bytes { get; }
         }
 
         private void SnapshotMediaPaths(
@@ -267,6 +495,15 @@ namespace Shmembee.WpdSidecar
             && value != ".."
             && value.IndexOfAny(FolderSeparators) < 0
             && value.IndexOf(':') < 0;
+
+        private static bool IsPlaylistFileName(string name)
+        {
+            string extension = Path.GetExtension(name);
+            return IsSafePathSegment(name)
+                && string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal)
+                && (string.Equals(extension, ".m3u", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(extension, ".m3u8", StringComparison.OrdinalIgnoreCase));
+        }
 
         private void Replace(WpdSession session, string folderId, string name,
             byte[] bytes, OperationResponse response)
@@ -434,10 +671,45 @@ namespace Shmembee.WpdSidecar
             if (request.Operation != "probe"
                 && request.Operation != "snapshot-playlists"
                 && request.Operation != "snapshot-media-paths"
+                && request.Operation != "create-playlist-backup"
+                && request.Operation != "delete-playlist-backup"
                 && string.IsNullOrWhiteSpace(request.Name))
                 throw new ArgumentException("Name is required.");
             if (request.Operation == "replace" && request.ContentBase64 == null)
                 throw new ArgumentException("ContentBase64 is required.");
+            if (request.Operation == "delete-playlist-backup")
+                ValidateBackupHandle(
+                    request.BackupFolderName,
+                    request.CopiedNames);
+        }
+
+        private static void ValidateBackupHandle(
+            string backupFolderName,
+            string[] copiedNames)
+        {
+            if (string.IsNullOrWhiteSpace(backupFolderName)
+                || !backupFolderName.StartsWith(
+                    BackupFolderPrefix,
+                    StringComparison.Ordinal)
+                || !IsSafePathSegment(backupFolderName))
+            {
+                throw new ArgumentException(
+                    "A constrained Shmembee backup folder name is required.");
+            }
+            if (copiedNames == null)
+            {
+                throw new ArgumentException("CopiedNames is required.");
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string name in copiedNames)
+            {
+                if (!IsPlaylistFileName(name) || !seen.Add(name))
+                {
+                    throw new ArgumentException(
+                        "CopiedNames must contain unique direct-child M3U filenames.");
+                }
+            }
         }
 
         private static string Hash(byte[] bytes)
@@ -646,6 +918,19 @@ namespace Shmembee.WpdSidecar
                     Marshal.FinalReleaseComObject(stream);
                 }
                 return objectId;
+            }
+
+            public string CreateFolder(string parent, string name)
+            {
+                IPortableDeviceValues values =
+                    (IPortableDeviceValues)new PortableDeviceValues();
+                values.SetStringValue(in ObjectParentId, parent);
+                values.SetStringValue(in ObjectName, name);
+                Guid type = FolderContentType;
+                Guid format = PropertiesOnlyFormat;
+                values.SetGuidValue(in ObjectContentType, in type);
+                values.SetGuidValue(in ObjectFormat, in format);
+                return content.CreateObjectWithPropertiesOnly(values);
             }
 
             public void Rename(string objectId, string name)

@@ -1642,7 +1642,8 @@ namespace MusicBeePlugin
                     + (deletes == 0
                         ? string.Empty
                         : "\r\n\r\n" + deletes + " playlist deletion(s) are included.")
-                    + "\r\n\r\nEach playlist is backed up and verified independently. "
+                    + "\r\n\r\nBefore any phone change, Shmembee creates one verified "
+                    + "backup of every phone M3U playlist. "
                     + "If a later item fails, earlier successful changes remain applied.",
                 "Apply all reviewed changes",
                 MessageBoxButtons.OKCancel,
@@ -1673,12 +1674,14 @@ namespace MusicBeePlugin
                         result.WasCancelled
                             ? "Playlist changes cancelled"
                             : result.FailedCount == 0
+                                && result.NotStartedCount == 0
                             ? "Playlist changes complete"
                             : "Playlist changes need attention",
                         MessageBoxButtons.OK,
                         result.WasCancelled
                             ? MessageBoxIcon.Information
                             : result.FailedCount == 0
+                                && result.NotStartedCount == 0
                             ? MessageBoxIcon.Information
                             : MessageBoxIcon.Warning);
                     foreach (string rowId in result.SucceededRowIds)
@@ -1788,7 +1791,8 @@ namespace MusicBeePlugin
                 this,
                 "Apply the reviewed " + DescribeOutcome(current.Reconciliation.Outcome)
                     + " proposal to both playlists?\r\n\r\n"
-                    + "Shmembee will re-read, back up, write, and verify both destinations.",
+                    + "Before the first phone write, Shmembee will create a verified backup "
+                    + "of every phone M3U playlist, then write and verify both destinations.",
                 "Apply synchronization",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Warning);

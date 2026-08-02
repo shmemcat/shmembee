@@ -27,6 +27,56 @@ namespace Shmembee.Application.Ports
         IReadOnlyList<string> ReadMediaPaths();
     }
 
+    public interface IPhonePlaylistBackupTransport
+    {
+        PhonePlaylistBackupResult CreatePlaylistBackup();
+
+        void DeletePlaylistBackup(PhonePlaylistBackupHandle handle);
+    }
+
+    public sealed class PhonePlaylistBackupResult
+    {
+        public PhonePlaylistBackupResult(
+            PhonePlaylistBackupHandle handle,
+            int playlistCount)
+        {
+            if (playlistCount < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(playlistCount));
+            }
+
+            Handle = handle ?? throw new ArgumentNullException(nameof(handle));
+            PlaylistCount = playlistCount;
+        }
+
+        public PhonePlaylistBackupHandle Handle { get; }
+
+        public int PlaylistCount { get; }
+    }
+
+    public sealed class PhonePlaylistBackupHandle
+    {
+        public PhonePlaylistBackupHandle(
+            string backupFolderName,
+            IReadOnlyList<string> copiedBackingNames)
+        {
+            if (string.IsNullOrWhiteSpace(backupFolderName))
+            {
+                throw new ArgumentException(
+                    "A backup folder name is required.",
+                    nameof(backupFolderName));
+            }
+
+            BackupFolderName = backupFolderName.Trim();
+            CopiedBackingNames = copiedBackingNames
+                ?? throw new ArgumentNullException(nameof(copiedBackingNames));
+        }
+
+        public string BackupFolderName { get; }
+
+        public IReadOnlyList<string> CopiedBackingNames { get; }
+    }
+
     public sealed class PhonePlaylistContent
     {
         public PhonePlaylistContent(

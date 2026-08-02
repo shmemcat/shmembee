@@ -11,7 +11,9 @@ param(
 
     [string]$Name = "Shmembee Phase 3 Test.m3u",
 
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+
+    [switch]$BackupProbe
 )
 
 $ErrorActionPreference = "Stop"
@@ -36,10 +38,16 @@ function Invoke-WpdSidecar {
         [Parameter(Mandatory)]
         [string]$Operation,
 
-        [Parameter(Mandatory)]
-        [string]$ObjectName,
+        [AllowNull()]
+        [string]$ObjectName = $null,
 
-        [string]$ContentBase64
+        [string]$ContentBase64,
+
+        [string]$RequestFolder = $Folder,
+
+        [string]$BackupFolderName,
+
+        [string[]]$CopiedNames
     )
 
     $operationId = [Guid]::NewGuid().ToString("N")
@@ -48,9 +56,11 @@ function Invoke-WpdSidecar {
         OperationId = $operationId
         Device = $Device
         Storage = $Storage
-        Folder = $Folder
+        Folder = $RequestFolder
         Name = $ObjectName
         ContentBase64 = $ContentBase64
+        BackupFolderName = $BackupFolderName
+        CopiedNames = $CopiedNames
     } | ConvertTo-Json -Compress
     $responseJson = $request | & $sidecarPath
     $exitCode = $LASTEXITCODE
@@ -92,6 +102,72 @@ finally {
 $cleanup = Invoke-WpdSidecar -Operation "probe" -ObjectName $candidateName
 if ($cleanup.OriginalObjectId) {
     throw "The WPD probe candidate was not cleaned up: $candidateName"
+}
+
+if ($BackupProbe) {
+    $backupHandle = $null
+    $preservedBackupObjects = @()
+    try {
+        $backupHandle = Invoke-WpdSidecar -Operation "create-playlist-backup"
+        if ([string]::IsNullOrWhiteSpace($backupHandle.BackupFolderName)) {
+            throw "The backup probe received no cleanup handle."
+        }
+
+        $copiedNames = @($backupHandle.CopiedNames)
+        $backupRoot = $Folder.TrimEnd("/", "\") + "/backup"
+        $backupFolder = $Folder.TrimEnd("/", "\") `
+            + "/backup/" + $backupHandle.BackupFolderName
+        $backupRootSnapshot = Invoke-WpdSidecar `
+            -Operation "probe" `
+            -RequestFolder $backupRoot
+        $preservedBackupObjects = @($backupRootSnapshot.Objects | Where-Object {
+            ($_ -split "\|", 2)[1] -ne $backupHandle.BackupFolderName
+        })
+        foreach ($copiedName in $copiedNames) {
+            if ([string]::IsNullOrWhiteSpace($copiedName) `
+                -or [IO.Path]::GetFileName($copiedName) -ne $copiedName `
+                -or @(".m3u", ".m3u8") -notcontains [IO.Path]::GetExtension($copiedName).ToLowerInvariant()) {
+                throw "The backup probe received an unsafe copied name: $copiedName"
+            }
+
+            $original = Invoke-WpdSidecar `
+                -Operation "read" `
+                -ObjectName $copiedName
+            $copy = Invoke-WpdSidecar `
+                -Operation "read" `
+                -RequestFolder $backupFolder `
+                -ObjectName $copiedName
+            if ($copy.ContentBase64 -ne $original.ContentBase64) {
+                throw "Backup readback differs from source playlist: $copiedName"
+            }
+        }
+    }
+    finally {
+        if ($null -ne $backupHandle `
+            -and -not [string]::IsNullOrWhiteSpace($backupHandle.BackupFolderName)) {
+            $null = Invoke-WpdSidecar `
+                -Operation "delete-playlist-backup" `
+                -BackupFolderName $backupHandle.BackupFolderName `
+                -CopiedNames @($backupHandle.CopiedNames)
+        }
+    }
+
+    $cleanupSnapshot = Invoke-WpdSidecar `
+        -Operation "probe" `
+        -RequestFolder $backupRoot
+    $remainingBackupObjects = @($cleanupSnapshot.Objects)
+    if ($remainingBackupObjects | Where-Object {
+        ($_ -split "\|", 2)[1] -eq $backupHandle.BackupFolderName
+    }) {
+        throw "The backup probe's returned folder was not cleaned up."
+    }
+    foreach ($preservedObject in $preservedBackupObjects) {
+        if ($remainingBackupObjects -notcontains $preservedObject) {
+            throw "Cleanup changed a pre-existing backup object: $preservedObject"
+        }
+    }
+
+    Write-Host "Opt-in backup create/copy/verify/cleanup probe: passed"
 }
 
 Write-Host "Non-destructive WPD probe passed."

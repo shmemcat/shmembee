@@ -52,7 +52,11 @@ namespace Shmembee.Infrastructure.Playlists
                 ParsedPlaylist parsed = parser.Parse(stream, backingName, backingName);
                 return State(
                     exists: true,
-                    parsed.Entries.Select(entry => entry.NormalizedPhonePath).ToList());
+                    parsed.Entries.Select(entry => entry.NormalizedPhonePath).ToList(),
+                    parsed.Entries.Select(entry => new PlaylistEntryMetadata(
+                        entry.NormalizedPhonePath,
+                        entry.Title,
+                        entry.DurationSeconds)).ToList());
             }
         }
 
@@ -105,10 +109,15 @@ namespace Shmembee.Infrastructure.Playlists
 
         private static PlaylistState State(
             bool exists,
-            IReadOnlyList<string> entries) =>
+            IReadOnlyList<string> entries,
+            IReadOnlyList<PlaylistEntryMetadata>? entryMetadata = null) =>
             new PlaylistState(
                 exists,
                 PlaylistChecksum.Compute(entries),
-                new ReadOnlyCollection<string>(entries.ToList()));
+                new ReadOnlyCollection<string>(entries.ToList()),
+                entryMetadata == null
+                    ? null
+                    : new ReadOnlyCollection<PlaylistEntryMetadata>(
+                        entryMetadata.ToList()));
     }
 }

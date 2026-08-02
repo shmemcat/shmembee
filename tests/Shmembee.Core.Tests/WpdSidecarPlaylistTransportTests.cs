@@ -43,6 +43,150 @@ public sealed class WpdSidecarPlaylistTransportTests
     }
 
     [Fact]
+    public void CreateBackupReturnsOpaqueCleanupHandle()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            JsonElement root = document.RootElement;
+            Assert.Equal(
+                "create-playlist-backup",
+                root.GetProperty("Operation").GetString());
+            Assert.True(root.GetProperty("Name").ValueKind == JsonValueKind.Null);
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = root.GetProperty("OperationId").GetString(),
+                    BackupFolderName = "shmembee-20260802-031000-0000000-id",
+                    CopiedNames = new[] { "One.m3u", "Two.m3u8" }
+                }),
+                string.Empty);
+        });
+
+        Shmembee.Application.Ports.PhonePlaylistBackupResult result =
+            CreateTransport(runner).CreatePlaylistBackup();
+
+        Assert.Equal(2, result.PlaylistCount);
+        Assert.Equal(
+            "shmembee-20260802-031000-0000000-id",
+            result.Handle.BackupFolderName);
+        Assert.Equal(
+            new[] { "One.m3u", "Two.m3u8" },
+            result.Handle.CopiedBackingNames);
+    }
+
+    [Fact]
+    public void DeleteBackupSerializesOnlyHandleContents()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            JsonElement root = document.RootElement;
+            Assert.Equal(
+                "delete-playlist-backup",
+                root.GetProperty("Operation").GetString());
+            Assert.Equal(
+                "shmembee-20260802-031000-0000000-id",
+                root.GetProperty("BackupFolderName").GetString());
+            Assert.Equal(
+                new[] { "One.m3u", "Two.m3u8" },
+                root.GetProperty("CopiedNames")
+                    .EnumerateArray()
+                    .Select(item => item.GetString()));
+            return Success(root.GetProperty("OperationId").GetString()!);
+        });
+
+        CreateTransport(runner).DeletePlaylistBackup(
+            new Shmembee.Application.Ports.PhonePlaylistBackupHandle(
+                "shmembee-20260802-031000-0000000-id",
+                new[] { "One.m3u", "Two.m3u8" }));
+
+        Assert.Equal(1, runner.CallCount);
+    }
+
+    [Theory]
+    [InlineData("../other")]
+    [InlineData("other")]
+    public void UnsafeBackupHandlesNeverStartProcess(string folderName)
+    {
+        var runner = new RecordingRunner(_ => throw new InvalidOperationException());
+        var handle = new Shmembee.Application.Ports.PhonePlaylistBackupHandle(
+            folderName,
+            Array.Empty<string>());
+
+        Assert.Throws<ArgumentException>(
+            () => CreateTransport(runner).DeletePlaylistBackup(handle));
+        Assert.Equal(0, runner.CallCount);
+    }
+
+    [Theory]
+    [InlineData("../One.m3u")]
+    [InlineData("One.txt")]
+    public void UnsafeBackupCopiedNamesNeverStartCleanupProcess(string copiedName)
+    {
+        var runner = new RecordingRunner(_ => throw new InvalidOperationException());
+        var handle = new Shmembee.Application.Ports.PhonePlaylistBackupHandle(
+            "shmembee-20260802-031000-0000000-id",
+            new[] { copiedName });
+
+        Assert.Throws<ArgumentException>(
+            () => CreateTransport(runner).DeletePlaylistBackup(handle));
+        Assert.Equal(0, runner.CallCount);
+    }
+
+    [Fact]
+    public void UnsafeCreateBackupResponseCannotBecomeCleanupHandle()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = document.RootElement
+                        .GetProperty("OperationId")
+                        .GetString(),
+                    BackupFolderName = "some-existing-folder",
+                    CopiedNames = new[] { "One.m3u" }
+                }),
+                string.Empty);
+        });
+
+        Assert.Throws<ArgumentException>(
+            () => CreateTransport(runner).CreatePlaylistBackup());
+        Assert.Equal(1, runner.CallCount);
+    }
+
+    [Fact]
+    public void DuplicateCreateBackupCopiedNamesAreRejected()
+    {
+        var runner = new RecordingRunner(request =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = document.RootElement
+                        .GetProperty("OperationId")
+                        .GetString(),
+                    BackupFolderName = "shmembee-20260802-031000-0000000-id",
+                    CopiedNames = new[] { "One.m3u", "One.m3u" }
+                }),
+                string.Empty);
+        });
+
+        Assert.Throws<ArgumentException>(
+            () => CreateTransport(runner).CreatePlaylistBackup());
+        Assert.Equal(1, runner.CallCount);
+    }
+
+    [Fact]
     public void TimeoutIsBoundedAndReportedAsIoFailure()
     {
         var runner = new ThrowingRunner(new TimeoutException());

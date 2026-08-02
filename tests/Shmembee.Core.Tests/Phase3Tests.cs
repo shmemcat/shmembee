@@ -241,6 +241,29 @@ public sealed class Phase3Tests : IDisposable
     }
 
     [Fact]
+    public void PhoneWriterPreservesExtendedInfoForResolution()
+    {
+        string playlists = Path.Combine(temporaryDirectory, "playlists");
+        string backups = Path.Combine(temporaryDirectory, "backups");
+        Directory.CreateDirectory(playlists);
+        File.WriteAllText(
+            Path.Combine(playlists, "Fixture.m3u"),
+            "#EXTM3U\n#EXTINF:198,Ashnikko - Trinkets\n"
+                + "Music/Ashnikko/Trinkets/1-01 Trinkets.mp3\n",
+            new UTF8Encoding(false));
+        var writer = new FileSystemPhonePlaylistWriter(playlists, backups);
+
+        PlaylistState state = writer.Read("Fixture.m3u");
+
+        PlaylistEntryMetadata metadata = Assert.Single(state.EntryMetadata);
+        Assert.Equal(
+            "Music/Ashnikko/Trinkets/1-01 Trinkets.mp3",
+            metadata.Path);
+        Assert.Equal("Ashnikko - Trinkets", metadata.Title);
+        Assert.Equal(198, metadata.DurationSeconds);
+    }
+
+    [Fact]
     public void CoordinatorRollsBackAfterCancellationBetweenWrites()
     {
         var musicBee = new MemoryMusicBee("old");

@@ -14,7 +14,8 @@ namespace Shmembee.Windows
         IPlaylistFileTransport,
         IPhonePlaylistCatalogReader,
         IPhonePlaylistSnapshotReader,
-        IPhoneMediaPathReader
+        IPhoneMediaPathReader,
+        IPhonePlaylistBackupTransport
     {
         private readonly string sidecarPath;
         private readonly string deviceName;
@@ -133,12 +134,55 @@ namespace Shmembee.Windows
             Invoke("delete", backingName, null, false);
         }
 
+        public PhonePlaylistBackupResult CreatePlaylistBackup()
+        {
+            WpdSidecarResponse response = Invoke(
+                "create-playlist-backup",
+                null,
+                null,
+                false);
+            if (string.IsNullOrWhiteSpace(response.BackupFolderName))
+            {
+                throw new IOException(
+                    "The WPD sidecar returned no backup folder name.");
+            }
+
+            string[] copiedNames = response.CopiedNames ?? Array.Empty<string>();
+            ValidateBackupHandle(response.BackupFolderName, copiedNames);
+            return new PhonePlaylistBackupResult(
+                new PhonePlaylistBackupHandle(
+                    response.BackupFolderName,
+                    copiedNames),
+                copiedNames.Length);
+        }
+
+        public void DeletePlaylistBackup(PhonePlaylistBackupHandle handle)
+        {
+            if (handle == null)
+            {
+                throw new ArgumentNullException(nameof(handle));
+            }
+
+            string[] copiedNames = handle.CopiedBackingNames.ToArray();
+            ValidateBackupHandle(handle.BackupFolderName, copiedNames);
+            Invoke(
+                "delete-playlist-backup",
+                null,
+                null,
+                false,
+                null,
+                handle.BackupFolderName,
+                copiedNames);
+        }
+
         private WpdSidecarResponse Invoke(
             string operation,
             string backingName,
             string contentBase64,
             bool allowNotFound,
-            string requestedFolder = null)
+            string requestedFolder = null,
+            string backupFolderName = null,
+            string[] copiedNames = null)
         {
             string operationId = Guid.NewGuid().ToString("N");
             var request = new WpdSidecarRequest
@@ -150,7 +194,9 @@ namespace Shmembee.Windows
                 Storage = storageName,
                 Folder = requestedFolder ?? folderPath,
                 Name = backingName,
-                ContentBase64 = contentBase64
+                ContentBase64 = contentBase64,
+                BackupFolderName = backupFolderName,
+                CopiedNames = copiedNames
             };
             string requestJson = Serialize(request);
             WpdSidecarProcessResult result;
@@ -317,6 +363,49 @@ namespace Shmembee.Windows
             }
         }
 
+        private static void ValidateBackupHandle(
+            string backupFolderName,
+            IEnumerable<string> copiedNames)
+        {
+            Require(backupFolderName, nameof(backupFolderName));
+            if (!string.Equals(
+                Path.GetFileName(backupFolderName),
+                backupFolderName,
+                StringComparison.Ordinal)
+                || !backupFolderName.StartsWith(
+                    "shmembee-",
+                    StringComparison.Ordinal)
+                || backupFolderName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                throw new ArgumentException(
+                    "A Shmembee backup folder name is required.",
+                    nameof(backupFolderName));
+            }
+
+            if (copiedNames == null)
+            {
+                throw new ArgumentNullException(nameof(copiedNames));
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string name in copiedNames)
+            {
+                ValidateBackingName(name);
+                string extension = Path.GetExtension(name);
+                if ((!string.Equals(extension, ".m3u", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(
+                            extension,
+                            ".m3u8",
+                            StringComparison.OrdinalIgnoreCase))
+                    || !seen.Add(name))
+                {
+                    throw new ArgumentException(
+                        "Backup copied names must be unique M3U filenames.",
+                        nameof(copiedNames));
+                }
+            }
+        }
+
         private static string Require(string value, string parameterName)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -453,6 +542,8 @@ namespace Shmembee.Windows
         public string Folder { get; set; }
         public string Name { get; set; }
         public string ContentBase64 { get; set; }
+        public string BackupFolderName { get; set; }
+        public string[] CopiedNames { get; set; }
     }
 
     public sealed class WpdSidecarResponse
@@ -485,6 +576,8 @@ namespace Shmembee.Windows
         public string[] MediaPaths { get; set; }
         public string[] MediaPathsBase64 { get; set; }
         public WpdSidecarPlaylistContent[] Playlists { get; set; }
+        public string BackupFolderName { get; set; }
+        public string[] CopiedNames { get; set; }
 
         public IReadOnlyList<PhonePlaylistFile> EnumeratePlaylists()
         {

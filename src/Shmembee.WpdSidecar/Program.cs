@@ -68,6 +68,8 @@ namespace Shmembee.WpdSidecar
         public string Folder { get; set; }
         public string Name { get; set; }
         public string ContentBase64 { get; set; }
+        public string BackupFolderName { get; set; }
+        public string[] CopiedNames { get; set; }
     }
 
     public sealed class OperationResponse
@@ -92,6 +94,8 @@ namespace Shmembee.WpdSidecar
         public string[] MediaPaths { get; set; }
         public string[] MediaPathsBase64 { get; set; }
         public PlaylistContentResponse[] Playlists { get; set; }
+        public string BackupFolderName { get; set; }
+        public string[] CopiedNames { get; set; }
 
         public static OperationResponse Failure(
             string operationId,
