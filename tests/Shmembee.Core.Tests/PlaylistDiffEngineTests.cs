@@ -167,6 +167,7 @@ public sealed class PlaylistDiffEngineTests
         Assert.True(diff.MembershipEqual);
         Assert.Equal(PlaylistDifferenceKind.PhonePath, diff.Kind);
         PlaylistOccurrence occurrence = Assert.Single(diff.Occurrences);
+        Assert.True(occurrence.HasPhonePathDifference);
         Assert.Equal(
             "Music/New/01 - Song.mp3",
             occurrence.PhoneEntry!.ValueFor(PlaylistSide.Phone));
@@ -203,6 +204,32 @@ public sealed class PlaylistDiffEngineTests
             });
 
         Assert.Equal(PlaylistDifferenceKind.Identical, diff.Kind);
+        Assert.False(Assert.Single(diff.Occurrences).HasPhonePathDifference);
+    }
+
+    [Fact]
+    public void MissingExpectedPhonePathIsNotComparedAsPathDifference()
+    {
+        PlaylistDiff diff = Compare(
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "musicbee-a",
+                    musicBeeValue: "musicbee-a",
+                    phonePathProof: PhonePathProof.Unknown)
+            },
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "Music/A.mp3",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/A.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            });
+
+        Assert.False(Assert.Single(diff.Occurrences).HasPhonePathDifference);
     }
 
     [Fact]

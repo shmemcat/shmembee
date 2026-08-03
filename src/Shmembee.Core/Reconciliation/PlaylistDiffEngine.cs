@@ -139,6 +139,27 @@ namespace Shmembee.Core.Reconciliation
                     ? OccurrenceMembership.MusicBeeOnly
                     : OccurrenceMembership.PhoneOnly;
 
+        public bool HasPhonePathDifference
+        {
+            get
+            {
+                string? expectedPhonePath =
+                    MusicBeeEntry?.ValueFor(PlaylistSide.Phone);
+                if (PhoneEntry == null
+                    || string.IsNullOrWhiteSpace(expectedPhonePath))
+                {
+                    return false;
+                }
+
+                return !string.Equals(
+                    TrackPathNormalizer.NormalizePhonePath(
+                        PhoneEntry.SourceValue),
+                    TrackPathNormalizer.NormalizePhonePath(
+                        expectedPhonePath!),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
         public PlaylistOccurrenceChange Change =>
             Membership == OccurrenceMembership.Both
                 ? PlaylistOccurrenceChange.Unchanged

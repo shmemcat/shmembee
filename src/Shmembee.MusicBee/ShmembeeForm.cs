@@ -1403,13 +1403,16 @@ namespace MusicBeePlugin
             foreach (PlaylistOccurrence occurrence in row.Diff.Occurrences)
             {
                 if (!showMatchingTracks.Checked
-                    && occurrence.Membership == OccurrenceMembership.Both)
+                    && occurrence.Membership == OccurrenceMembership.Both
+                    && !occurrence.HasPhonePathDifference)
                 {
                     continue;
                 }
 
                 OccurrenceChoice choice = draft.ChoiceFor(occurrence);
-                string marker = occurrence.Change == PlaylistOccurrenceChange.Unchanged
+                string marker = occurrence.HasPhonePathDifference
+                    ? "Path →"
+                    : occurrence.Change == PlaylistOccurrenceChange.Unchanged
                     ? "="
                     : occurrence.Change == PlaylistOccurrenceChange.AddedInMusicBee
                         ? "MusicBee +"
@@ -1449,7 +1452,10 @@ namespace MusicBeePlugin
                 else
                 {
                     membershipGrid.Rows[index].Cells["Change"].ToolTipText =
-                        DescribeOccurrenceChange(occurrence.Change);
+                        occurrence.HasPhonePathDifference
+                            ? "The phone playlist contains an old path. Applying this custom "
+                                + "review writes the current phone media path."
+                            : DescribeOccurrenceChange(occurrence.Change);
                 }
             }
 
@@ -1518,7 +1524,8 @@ namespace MusicBeePlugin
             }
 
             draft.Action = PlaylistLandingAction.Custom;
-            draft.IsConfirmed = false;
+            draft.IsConfirmed = true;
+            draft.IsDeletion = false;
             SaveReviewDrafts();
         }
 
@@ -1545,7 +1552,8 @@ namespace MusicBeePlugin
             }
 
             draft.Action = PlaylistLandingAction.Custom;
-            draft.IsConfirmed = false;
+            draft.IsConfirmed = true;
+            draft.IsDeletion = false;
             SaveReviewDrafts();
             RenderMembershipRows();
         }
@@ -1571,7 +1579,8 @@ namespace MusicBeePlugin
             }
 
             draft.Action = PlaylistLandingAction.Custom;
-            draft.IsConfirmed = false;
+            draft.IsConfirmed = true;
+            draft.IsDeletion = false;
             SaveReviewDrafts();
             RenderMembershipRows();
         }
@@ -1582,11 +1591,10 @@ namespace MusicBeePlugin
             if (selectedPlaylistRow != null)
             {
                 PlaylistReviewDraft draft = GetOrCreateDraft(selectedPlaylistRow);
-                if (draft.Action == PlaylistLandingAction.Custom)
-                {
-                    draft.IsConfirmed = true;
-                    SaveReviewDrafts();
-                }
+                draft.Action = PlaylistLandingAction.Custom;
+                draft.IsConfirmed = true;
+                draft.IsDeletion = false;
+                SaveReviewDrafts();
             }
 
             ShowWorkspacePage(landingPage);
