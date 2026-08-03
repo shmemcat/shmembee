@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
@@ -252,16 +255,20 @@ namespace MusicBeePlugin
             }
 
             IReadOnlyList<LibraryTrack> library = ReadResolutionLibrary(musicBeeState);
-            IReadOnlyDictionary<string, string> mediaPaths =
-                ResolvePhoneMediaPaths(library, musicBeeState.Entries);
             AcceptedBaseline? baseline = baselineStore.Load(context.PairId);
+            IReadOnlyDictionary<string, string> mediaPaths =
+                ResolvePhoneMediaPaths(
+                    library,
+                    musicBeeState.Entries,
+                    out HashSet<string> observedMediaPaths);
             IReadOnlyList<ResolvedHarnessTrack> phoneTracks = ResolvePhoneTracks(
                 phoneState,
-                library,
+                new TrackResolver().CreateIndex(library),
                 baseline,
                 musicBeeState.Entries,
                 settings.PhoneMediaFolder,
-                mediaPaths);
+                mediaPaths,
+                observedMediaPaths);
             IReadOnlyList<ResolvedHarnessTrack> musicBeeTracks = PairMusicBeeOccurrences(
                 musicBeeState.Entries,
                 phoneTracks,
@@ -303,7 +310,11 @@ namespace MusicBeePlugin
             PlaylistDetailDiff detail,
             ReviewedPlaylistDraft draft,
             CancellationToken cancellationToken) =>
-            ApplyReviewedResult(detail, draft, cancellationToken, true);
+            ApplyReviewedResult(
+                detail,
+                draft,
+                cancellationToken,
+                true);
 
         private SynchronizationApplyResult ApplyReviewedResult(
             PlaylistDetailDiff detail,
@@ -331,6 +342,51 @@ namespace MusicBeePlugin
             {
                 return SynchronizationApplyResult.Failed(
                     "At least one selected track has no proven phone path.");
+            }
+
+            IReadOnlyList<LibraryTrack> currentLibrary = AddMissingPlaylistTracks(
+                ToResolutionLibrary(InvokeOnMusicBeeThread(
+                    () => libraryReader.ReadLibrary())),
+                finalized.Plan.MusicBeeEntries);
+            IReadOnlyDictionary<string, string> currentMediaPaths =
+                ResolvePhoneMediaPaths(
+                    new TrackResolver().CreateIndex(currentLibrary),
+                    finalized.Plan.MusicBeeEntries,
+                    cancellationToken,
+                    progress: null,
+                    out HashSet<string> observedMediaPaths);
+            AcceptedBaseline? acceptedBaseline = baselineStore.Load(
+                detail.Context.PairId);
+            for (int index = 0; index < finalized.Plan.MusicBeeEntries.Count; index++)
+            {
+                string musicBeeUrl = finalized.Plan.MusicBeeEntries[index];
+                string selectedPhonePath = TrackPathNormalizer.NormalizePhonePath(
+                    finalized.Plan.PhoneEntries[index]);
+                bool resolverProvedPath = currentMediaPaths.TryGetValue(
+                        musicBeeUrl,
+                        out string currentPhonePath)
+                    && string.Equals(
+                        selectedPhonePath,
+                        TrackPathNormalizer.NormalizePhonePath(currentPhonePath),
+                        StringComparison.OrdinalIgnoreCase);
+                bool resolverFoundDifferentPath =
+                    currentMediaPaths.ContainsKey(musicBeeUrl)
+                    && !resolverProvedPath;
+                bool baselineProvedIdentity = acceptedBaseline != null
+                    && BaselineUniquelyMaps(
+                        acceptedBaseline,
+                        selectedPhonePath,
+                        musicBeeUrl);
+                if (!resolverProvedPath
+                    && !(!resolverFoundDifferentPath
+                        && baselineProvedIdentity
+                        && observedMediaPaths.Contains(selectedPhonePath)))
+                {
+                    return SynchronizationApplyResult.Failed(
+                        "Phone media changed after review for "
+                            + musicBeeUrl
+                            + ". Refresh before applying; no playlist was written.");
+                }
             }
 
             SynchronizationPlan plan = new SynchronizationPlan(
@@ -845,7 +901,7 @@ namespace MusicBeePlugin
                     trackNumber: track.TrackNumber))
                 .ToList();
 
-        private static IReadOnlyList<LibraryTrack> AddMissingPlaylistTracks(
+        private IReadOnlyList<LibraryTrack> AddMissingPlaylistTracks(
             IReadOnlyList<LibraryTrack> library,
             IEnumerable<string> playlistEntries)
         {
@@ -857,7 +913,7 @@ namespace MusicBeePlugin
                 playlistEntries);
         }
 
-        private static IReadOnlyList<LibraryTrack> AddMissingPlaylistTracks(
+        private IReadOnlyList<LibraryTrack> AddMissingPlaylistTracks(
             IReadOnlyList<LibraryTrack> library,
             ISet<string> libraryUrls,
             IEnumerable<string> playlistEntries)
@@ -875,13 +931,24 @@ namespace MusicBeePlugin
             result.AddRange(library);
             foreach (string url in missing)
             {
-                result.Add(new LibraryTrack(url, url));
+                MusicLibraryTrack track = InvokeOnMusicBeeThread(
+                    () => libraryReader.ReadTrack(url));
+                result.Add(new LibraryTrack(
+                    track.Url,
+                    track.Url,
+                    track.Artist,
+                    track.Title,
+                    track.DurationSeconds,
+                    albumArtist: track.AlbumArtist,
+                    album: track.Album,
+                    discNumber: track.DiscNumber,
+                    trackNumber: track.TrackNumber));
             }
 
             return result;
         }
 
-        private static IReadOnlyList<ResolvedHarnessTrack> ResolvePhoneTracks(
+        private IReadOnlyList<ResolvedHarnessTrack> ResolvePhoneTracks(
             PlaylistState phoneState,
             IReadOnlyList<LibraryTrack> library,
             AcceptedBaseline? baseline,
@@ -898,13 +965,14 @@ namespace MusicBeePlugin
                 mediaPaths);
         }
 
-        private static IReadOnlyList<ResolvedHarnessTrack> ResolvePhoneTracks(
+        private IReadOnlyList<ResolvedHarnessTrack> ResolvePhoneTracks(
             PlaylistState phoneState,
             TrackResolverIndex resolver,
             AcceptedBaseline? baseline,
             IEnumerable<string>? preferredUrls = null,
             string mediaFolder = DesktopSettings.DefaultPhoneMediaFolder,
-            IReadOnlyDictionary<string, string>? mediaPaths = null)
+            IReadOnlyDictionary<string, string>? mediaPaths = null,
+            ISet<string>? observedMediaPaths = null)
         {
             var knownMappings = new Dictionary<string, string>(
                 StringComparer.OrdinalIgnoreCase);
@@ -944,10 +1012,10 @@ namespace MusicBeePlugin
                 }
             }
 
-            IReadOnlyDictionary<string, string>? approvedMappings =
-                knownMappings.Count == 0 ? null : knownMappings;
             HashSet<string>? preferredUrlKeys =
                 TrackResolverIndex.CreatePreferredUrlKeys(preferredUrls);
+            IReadOnlyDictionary<string, string>? approvedMappings =
+                knownMappings.Count == 0 ? null : knownMappings;
             var resolved = new List<ResolvedHarnessTrack>();
             for (int index = 0; index < phoneState.Entries.Count; index++)
             {
@@ -1017,26 +1085,73 @@ namespace MusicBeePlugin
 
                 if (result.Status != ResolutionStatus.Matched || result.Match == null)
                 {
-                    resolved.Add(ResolvedHarnessTrack.UnresolvedPhone(
-                        path,
-                        "Phone track could not be resolved safely ("
-                            + result.Status
-                            + ": "
-                            + result.Reason
-                            + ")."
-                            + DescribeResolutionCandidates(result)
-                            + DescribePhoneReference(reference)
-                            + " Exclude it to remove this stale playlist entry."));
+                    bool sourceFileExists = observedMediaPaths != null
+                        && observedMediaPaths.Contains(
+                            TrackPathNormalizer.NormalizePhonePath(path));
+                    string reason = "Phone track could not be resolved safely ("
+                        + result.Status
+                        + ": "
+                        + result.Reason
+                        + ")."
+                        + DescribeResolutionCandidates(result)
+                        + DescribePhoneReference(reference)
+                        + (sourceFileExists
+                            ? " Its existing path was found in the live phone-media scan."
+                            : " Exclude it to remove this stale playlist entry.");
+                    resolved.Add(sourceFileExists
+                        ? new ResolvedHarnessTrack(
+                            path,
+                            path,
+                            path,
+                            isResolved: false,
+                            unavailableReason: reason,
+                            sourcePhonePath: path,
+                            phonePathIsCurrent: true)
+                        : ResolvedHarnessTrack.UnresolvedPhone(path, reason));
                     continue;
                 }
 
+                string currentMediaPath = string.Empty;
+                bool resolvedMediaPath = mediaPaths != null
+                    && mediaPaths.TryGetValue(
+                        result.Match.Url,
+                        out currentMediaPath);
+                bool sourcePathIsCurrent = observedMediaPaths != null
+                    && observedMediaPaths.Contains(
+                        TrackPathNormalizer.NormalizePhonePath(path));
                 resolved.Add(new ResolvedHarnessTrack(
                     result.Match.Id,
                     result.Match.Url,
-                    path));
+                    resolvedMediaPath
+                        ? currentMediaPath
+                        : path,
+                    sourcePhonePath: path,
+                    phonePathIsCurrent: resolvedMediaPath || sourcePathIsCurrent));
             }
 
             return resolved;
+        }
+
+        private static bool BaselineUniquelyMaps(
+            AcceptedBaseline baseline,
+            string phonePath,
+            string musicBeeUrl)
+        {
+            string normalizedPath =
+                TrackPathNormalizer.NormalizePhonePath(phonePath);
+            List<string> mappedUrls = baseline.Tracks
+                .Where(track => string.Equals(
+                    TrackPathNormalizer.NormalizePhonePath(track.PhonePath),
+                    normalizedPath,
+                    StringComparison.OrdinalIgnoreCase))
+                .Select(track => track.MusicBeeUrl)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return mappedUrls.Count == 1
+                && string.Equals(
+                    mappedUrls[0],
+                    musicBeeUrl,
+                    StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsBetterResolution(
@@ -1061,19 +1176,38 @@ namespace MusicBeePlugin
 
         private IReadOnlyDictionary<string, string> ResolvePhoneMediaPaths(
             IReadOnlyList<LibraryTrack> library,
-            IEnumerable<string>? preferredUrls = null)
+            IEnumerable<string>? preferredUrls,
+            out HashSet<string> observedMediaPaths)
         {
             return ResolvePhoneMediaPaths(
                 new TrackResolver().CreateIndex(library),
-                preferredUrls);
+                preferredUrls,
+                cancellationToken: default,
+                progress: null,
+                out observedMediaPaths);
         }
 
         private IReadOnlyDictionary<string, string> ResolvePhoneMediaPaths(
             TrackResolverIndex resolver,
             IEnumerable<string>? preferredUrls = null,
             CancellationToken cancellationToken = default,
-            IProgress<PhoneMediaTraversalProgress>? progress = null)
+            IProgress<PhoneMediaTraversalProgress>? progress = null) =>
+            ResolvePhoneMediaPaths(
+                resolver,
+                preferredUrls,
+                cancellationToken,
+                progress,
+                out _);
+
+        private IReadOnlyDictionary<string, string> ResolvePhoneMediaPaths(
+            TrackResolverIndex resolver,
+            IEnumerable<string>? preferredUrls,
+            CancellationToken cancellationToken,
+            IProgress<PhoneMediaTraversalProgress>? progress,
+            out HashSet<string> observedMediaPaths)
         {
+            observedMediaPaths = new HashSet<string>(
+                StringComparer.OrdinalIgnoreCase);
             if (phoneMediaPathReader == null)
             {
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1090,6 +1224,8 @@ namespace MusicBeePlugin
             foreach (string path in mediaPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                observedMediaPaths.Add(
+                    TrackPathNormalizer.NormalizePhonePath(path));
                 ResolutionResult result = resolver.Resolve(
                     CreatePhoneReference(path, settings.PhoneMediaFolder),
                     approvedMappings: null,
@@ -1133,12 +1269,17 @@ namespace MusicBeePlugin
             ResolvedHarnessTrack track) =>
             new PlaylistSideEntry(
                 new TrackIdentity(track.TrackId),
-                track.PhonePath,
+                track.SourcePhonePath,
                 musicBeeValue: track.IsResolved ? track.MusicBeeUrl : null,
-                phoneValue: track.PhonePath,
-                phonePathProof: PhonePathProof.Proven,
+                phoneValue: track.PhonePathIsCurrent ? track.PhonePath : null,
+                phonePathProof: track.PhonePathIsCurrent
+                    ? PhonePathProof.Proven
+                    : PhonePathProof.Unknown,
                 musicBeeValueUnavailable: !track.IsResolved,
-                unavailableReason: track.UnavailableReason);
+                unavailableReason: track.UnavailableReason
+                    ?? (track.PhonePathIsCurrent
+                        ? null
+                        : "The playlist entry resolved to a track, but no unique current phone media path was discovered."));
 
         public void AttachUiDispatcher(Control dispatcher)
         {
@@ -1158,6 +1299,9 @@ namespace MusicBeePlugin
             IReadOnlyList<LibraryTrack> library = ToResolutionLibrary(
                 InvokeOnMusicBeeThread(() => libraryReader.ReadLibrary()));
             ReportProgress(progress, 25, "MusicBee library read");
+            library = AddMissingPlaylistTracks(
+                library,
+                playlists.SelectMany(item => item.TrackUrls));
             var libraryUrls = new HashSet<string>(
                 library.Select(track => track.Url),
                 StringComparer.OrdinalIgnoreCase);
@@ -1180,7 +1324,8 @@ namespace MusicBeePlugin
                     resolverIndex,
                     playlists.SelectMany(item => item.TrackUrls),
                     cancellationToken,
-                    traversalProgress);
+                    traversalProgress,
+                    out HashSet<string> observedMediaPaths);
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(progress, 45, "Phone media paths resolved");
             IReadOnlyList<PhonePlaylistContent>? phoneSnapshot =
@@ -1221,7 +1366,8 @@ namespace MusicBeePlugin
                     libraryUrls,
                     resolverIndex,
                     mediaPaths,
-                    phoneStates));
+                    phoneStates,
+                    observedMediaPaths));
                 ReportProgress(
                     progress,
                     65 + ((index + 1) * 35 / Math.Max(1, catalogRows.Count)),
@@ -1247,7 +1393,8 @@ namespace MusicBeePlugin
             ISet<string> libraryUrls,
             TrackResolverIndex resolverIndex,
             IReadOnlyDictionary<string, string> mediaPaths,
-            IDictionary<string, PlaylistState> phoneStates)
+            IDictionary<string, PlaylistState> phoneStates,
+            ISet<string> observedMediaPaths)
         {
             PlaylistCatalogRow catalog = view.CatalogRow;
             MusicPlaylist? musicBee = catalog.MusicBeePlaylist;
@@ -1292,7 +1439,8 @@ namespace MusicBeePlugin
                         baseline,
                         musicBeeState.Entries,
                         settings.PhoneMediaFolder,
-                        mediaPaths);
+                        mediaPaths,
+                        observedMediaPaths);
                     IReadOnlyList<ResolvedHarnessTrack> musicBeeTracks =
                         PairMusicBeeOccurrences(
                             musicBeeState.Entries,
@@ -1353,7 +1501,8 @@ namespace MusicBeePlugin
                         resolverIndex,
                         baselineStore.Load(catalog.RowId),
                         mediaFolder: settings.PhoneMediaFolder,
-                        mediaPaths: mediaPaths);
+                        mediaPaths: mediaPaths,
+                        observedMediaPaths: observedMediaPaths);
                     PlaylistDiff diff = PlaylistDiffEngine.Compare(
                         Array.Empty<PlaylistSideEntry>(),
                         tracks.Select(ToPhoneDiffEntry));
@@ -1410,6 +1559,8 @@ namespace MusicBeePlugin
                 ? HarnessPlaylistVisualState.OneSided
                 : diff.Kind == PlaylistDifferenceKind.Membership
                     ? HarnessPlaylistVisualState.Changed
+                    : diff.Kind == PlaylistDifferenceKind.PhonePath
+                        ? HarnessPlaylistVisualState.Changed
                     : diff.Kind == PlaylistDifferenceKind.OrderOnly
                         ? HarnessPlaylistVisualState.OrderOnly
                         : HarnessPlaylistVisualState.Unchanged;
@@ -1417,6 +1568,8 @@ namespace MusicBeePlugin
                 ? "ONE SIDE ONLY"
                 : diff.Kind == PlaylistDifferenceKind.Membership
                     ? "TRACKS DIFFER"
+                    : diff.Kind == PlaylistDifferenceKind.PhonePath
+                        ? "PHONE PATHS CHANGED"
                     : diff.Kind == PlaylistDifferenceKind.OrderOnly
                         ? "ORDER DIFFERS"
                         : "UP TO DATE";
@@ -1659,7 +1812,8 @@ namespace MusicBeePlugin
                 }
             }
 
-            string summary = succeeded.Count + " playlist change(s) applied successfully.";
+            string summary = succeeded.Count
+                + " playlist change(s) applied successfully.";
             int notStartedCount = drafts.Count - processedCount;
             if (wasCancelled)
             {
@@ -1707,7 +1861,9 @@ namespace MusicBeePlugin
                 && !phoneConnectionLost
                 && errors.Count == 0
                 && processedCount == drafts.Count;
-            if (completeSuccess && succeeded.Count > 0 && postSyncBackup != null)
+            if (completeSuccess
+                && succeeded.Count > 0
+                && postSyncBackup != null)
             {
                 try
                 {
@@ -1972,7 +2128,11 @@ namespace MusicBeePlugin
                     track.Url,
                     track.Artist,
                     track.Title,
-                    track.DurationSeconds))
+                    track.DurationSeconds,
+                    albumArtist: track.AlbumArtist,
+                    album: track.Album,
+                    discNumber: track.DiscNumber,
+                    trackNumber: track.TrackNumber))
                 .ToList();
             library = library
                 .Concat(musicBeeState.Entries
@@ -2366,6 +2526,7 @@ namespace MusicBeePlugin
                     ? fileMetadata.Title
                     : title,
                 durationSeconds: durationSeconds,
+                albumArtist: artist,
                 album: album,
                 discNumber: fileMetadata.DiscNumber,
                 trackNumber: fileMetadata.TrackNumber);
@@ -2496,6 +2657,9 @@ namespace MusicBeePlugin
 
             public IReadOnlyList<MusicPlaylist> ReadPlaylists() =>
                 playlists;
+
+            public MusicLibraryTrack ReadTrack(string url) =>
+                new MusicLibraryTrack(url, null, null, null);
         }
 
         private sealed class SnapshotPhonePlaylistCatalogReader :
@@ -2565,6 +2729,7 @@ namespace MusicBeePlugin
 
         public bool MembershipMatches =>
             Difference == PlaylistDifferenceKind.Identical
+            || Difference == PlaylistDifferenceKind.PhonePath
             || Difference == PlaylistDifferenceKind.OrderOnly;
 
         public bool OrderMatches => Difference == PlaylistDifferenceKind.Identical;
@@ -2677,11 +2842,15 @@ namespace MusicBeePlugin
             string musicBeeUrl,
             string phonePath,
             bool isResolved = true,
-            string? unavailableReason = null)
+            string? unavailableReason = null,
+            string? sourcePhonePath = null,
+            bool phonePathIsCurrent = true)
         {
             TrackId = trackId;
             MusicBeeUrl = musicBeeUrl;
             PhonePath = phonePath;
+            SourcePhonePath = sourcePhonePath ?? phonePath;
+            PhonePathIsCurrent = phonePathIsCurrent;
             IsResolved = isResolved;
             UnavailableReason = unavailableReason;
         }
@@ -2691,6 +2860,10 @@ namespace MusicBeePlugin
         public string MusicBeeUrl { get; }
 
         public string PhonePath { get; }
+
+        public string SourcePhonePath { get; }
+
+        public bool PhonePathIsCurrent { get; }
 
         public bool IsResolved { get; }
 
@@ -2704,6 +2877,8 @@ namespace MusicBeePlugin
                 phonePath,
                 phonePath,
                 isResolved: false,
-                unavailableReason: reason);
+                unavailableReason: reason,
+                sourcePhonePath: phonePath,
+                phonePathIsCurrent: false);
     }
 }

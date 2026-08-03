@@ -60,6 +60,7 @@ namespace Shmembee.Core.Resolution
 
         internal static bool OptionalNumberMatches(int? library, int? reference) =>
             !reference.HasValue
+            || !library.HasValue
             || library == reference;
 
         internal static bool MetadataEquals(string? first, string? second)
@@ -90,18 +91,59 @@ namespace Shmembee.Core.Resolution
             string.IsNullOrWhiteSpace(referenceValue)
             || MetadataEquals(libraryValue, referenceValue);
 
+        internal static bool ArtistOrAlbumArtistMatches(
+            LibraryTrack track,
+            TrackReference reference) =>
+            (string.IsNullOrWhiteSpace(reference.Artist)
+                && string.IsNullOrWhiteSpace(reference.AlbumArtist))
+            || MetadataEquals(track.Artist, reference.Artist)
+            || MetadataEquals(track.AlbumArtist, reference.AlbumArtist);
+
         internal static string NormalizeMetadata(string value)
         {
-            var normalized = new StringBuilder(value.Length);
-            foreach (char character in value)
+            string canonical = value.Normalize(NormalizationForm.FormD);
+            var normalized = new StringBuilder(canonical.Length);
+            foreach (char character in canonical)
             {
-                if (char.IsLetterOrDigit(character))
+                System.Globalization.UnicodeCategory category =
+                    char.GetUnicodeCategory(character);
+                if (char.IsLetterOrDigit(character)
+                    || category == System.Globalization.UnicodeCategory.NonSpacingMark
+                    || category == System.Globalization.UnicodeCategory.SpacingCombiningMark
+                    || category == System.Globalization.UnicodeCategory.EnclosingMark)
                 {
                     normalized.Append(char.ToUpperInvariant(character));
                 }
             }
 
-            return normalized.ToString();
+            return normalized.ToString().Normalize(NormalizationForm.FormC);
+        }
+
+        internal static IEnumerable<string> EnumerateAlternateTitleKeys(
+            LibraryTrack track)
+        {
+            string title = (track.Title ?? string.Empty).Trim();
+            string artist = (track.Artist ?? string.Empty).Trim();
+            if (title.Length == 0 || artist.Length == 0)
+            {
+                yield break;
+            }
+
+            string[] separators = { " - ", " / " };
+            foreach (string separator in separators)
+            {
+                if (title.StartsWith(
+                    artist + separator,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    string alternate = NormalizeMetadata(
+                        title.Substring(artist.Length + separator.Length));
+                    if (alternate.Length > 0)
+                    {
+                        yield return alternate;
+                    }
+                }
+            }
         }
     }
 
@@ -160,14 +202,35 @@ namespace Shmembee.Core.Resolution
                 if (!string.IsNullOrWhiteSpace(track.Title))
                 {
                     string title = TrackResolver.NormalizeMetadata(track.Title!);
+                    if (title.Length == 0)
+                    {
+                        continue;
+                    }
+
                     Add(titles, title, track);
+                    foreach (string alternateTitle in
+                        TrackResolver.EnumerateAlternateTitleKeys(track))
+                    {
+                        if (!string.Equals(
+                            alternateTitle,
+                            title,
+                            StringComparison.Ordinal))
+                        {
+                            Add(titles, alternateTitle, track);
+                        }
+                    }
+
                     if (!string.IsNullOrWhiteSpace(track.Artist))
                     {
+                        string artist = TrackResolver.NormalizeMetadata(track.Artist!);
+                        if (artist.Length == 0)
+                        {
+                            continue;
+                        }
+
                         Add(
                             artistTitles,
-                            TrackResolver.NormalizeMetadata(track.Artist!)
-                                + "\0"
-                                + title,
+                            artist + "\0" + title,
                             track);
                     }
                 }
@@ -255,14 +318,23 @@ namespace Shmembee.Core.Resolution
             if (!string.IsNullOrWhiteSpace(reference.Artist)
                 && !string.IsNullOrWhiteSpace(reference.Title))
             {
+                string artistKey = TrackResolver.NormalizeMetadata(reference.Artist!);
+                string titleKey = TrackResolver.NormalizeMetadata(reference.Title!);
                 List<LibraryTrack> metadataMatches = Lookup(
                         artistTitles,
-                        TrackResolver.NormalizeMetadata(reference.Artist!)
-                            + "\0"
-                            + TrackResolver.NormalizeMetadata(reference.Title!))
+                        artistKey + "\0" + titleKey)
                     .Where(track => TrackResolver.DurationMatches(
                         track.DurationSeconds,
-                        reference.DurationSeconds))
+                        reference.DurationSeconds)
+                        && TrackResolver.OptionalMetadataMatches(
+                            track.Album,
+                            reference.Album)
+                        && TrackResolver.OptionalNumberMatches(
+                            track.DiscNumber,
+                            reference.DiscNumber)
+                        && TrackResolver.OptionalNumberMatches(
+                            track.TrackNumber,
+                            reference.TrackNumber))
                     .ToList();
                 result = FromCandidates(
                     metadataMatches,
@@ -276,14 +348,18 @@ namespace Shmembee.Core.Resolution
 
             if (!string.IsNullOrWhiteSpace(reference.Title))
             {
+                string titleKey = TrackResolver.NormalizeMetadata(reference.Title!);
+                if (titleKey.Length == 0)
+                {
+                    return ResolutionResult.Unmatched(
+                        "Phone title contains no matchable letters or digits");
+                }
+
                 List<LibraryTrack> phoneTemplateMatches = Lookup(
                         titles,
-                        TrackResolver.NormalizeMetadata(reference.Title!))
+                        titleKey)
                     .Where(track =>
                         TrackResolver.OptionalMetadataMatches(
-                            track.AlbumArtist,
-                            reference.AlbumArtist)
-                        && TrackResolver.OptionalMetadataMatches(
                             track.Album,
                             reference.Album)
                         && TrackResolver.DurationMatches(
@@ -298,6 +374,28 @@ namespace Shmembee.Core.Resolution
                 if (exactTitleMatches.Count > 0)
                 {
                     phoneTemplateMatches = exactTitleMatches;
+                }
+
+                List<LibraryTrack> artistOrAlbumArtistMatches =
+                    phoneTemplateMatches
+                        .Where(track =>
+                            TrackResolver.ArtistOrAlbumArtistMatches(
+                                track,
+                                reference))
+                        .ToList();
+                if (artistOrAlbumArtistMatches.Count > 0)
+                {
+                    phoneTemplateMatches = artistOrAlbumArtistMatches;
+                }
+
+                List<LibraryTrack> exactArtistMatches = phoneTemplateMatches
+                    .Where(track => TrackResolver.ExactMetadataEquals(
+                        track.Artist,
+                        reference.Artist))
+                    .ToList();
+                if (exactArtistMatches.Count > 0)
+                {
+                    phoneTemplateMatches = exactArtistMatches;
                 }
 
                 List<LibraryTrack> exactAlbumArtistMatches =
@@ -330,9 +428,8 @@ namespace Shmembee.Core.Resolution
                             track.TrackNumber,
                             reference.TrackNumber))
                     .ToList();
-                if (numberedMatches.Count > 0
-                    && (reference.DiscNumber.HasValue
-                        || reference.TrackNumber.HasValue))
+                if (reference.DiscNumber.HasValue
+                    || reference.TrackNumber.HasValue)
                 {
                     phoneTemplateMatches = numberedMatches;
                 }

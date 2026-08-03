@@ -7,6 +7,8 @@ namespace Shmembee.Application.Ports
         IReadOnlyList<MusicLibraryTrack> ReadLibrary();
 
         IReadOnlyList<MusicPlaylist> ReadPlaylists();
+
+        MusicLibraryTrack ReadTrack(string url);
     }
 
     public sealed class MusicLibraryTrack

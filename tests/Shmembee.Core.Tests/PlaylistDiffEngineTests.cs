@@ -44,6 +44,108 @@ public sealed class PlaylistDiffEngineTests
     }
 
     [Fact]
+    public void CompareSurfacesPhonePathMigrationWithoutMembershipDifference()
+    {
+        PlaylistDiff diff = Compare(
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "musicbee-a",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/New/01 - Song.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            },
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "Music/Old/01 - Song.mp3",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/New/01 - Song.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            });
+
+        Assert.True(diff.MembershipEqual);
+        Assert.Equal(PlaylistDifferenceKind.PhonePath, diff.Kind);
+        PlaylistOccurrence occurrence = Assert.Single(diff.Occurrences);
+        Assert.Equal(
+            "Music/New/01 - Song.mp3",
+            occurrence.PhoneEntry!.ValueFor(PlaylistSide.Phone));
+        PlaylistBuildResult built = PlaylistResultBuilder.TakeCompleteSide(
+            diff,
+            PlaylistSide.MusicBee,
+            PlaylistSide.MusicBee);
+        Assert.Equal(
+            new[] { "Music/New/01 - Song.mp3" },
+            built.Entries.Select(entry => entry.ValueFor(PlaylistSide.Phone)));
+    }
+
+    [Fact]
+    public void CompareTreatsNormalizedEquivalentPhonePathsAsIdentical()
+    {
+        PlaylistDiff diff = Compare(
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "musicbee-a",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/Artist/Song.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            },
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    @".\Music\Artist\Song.mp3",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/Artist/Song.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            });
+
+        Assert.Equal(PlaylistDifferenceKind.Identical, diff.Kind);
+    }
+
+    [Fact]
+    public void CompareSurfacesPhonePathMigrationBeforeOrderDifference()
+    {
+        PlaylistDiff diff = Compare(
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "musicbee-a",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/New/A.mp3",
+                    phonePathProof: PhonePathProof.Proven),
+                new PlaylistSideEntry(
+                    Track("b"),
+                    "musicbee-b",
+                    musicBeeValue: "musicbee-b",
+                    phoneValue: "Music/B.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            },
+            new[]
+            {
+                new PlaylistSideEntry(
+                    Track("b"),
+                    "Music/B.mp3",
+                    musicBeeValue: "musicbee-b",
+                    phoneValue: "Music/B.mp3",
+                    phonePathProof: PhonePathProof.Proven),
+                new PlaylistSideEntry(
+                    Track("a"),
+                    "Music/Old/A.mp3",
+                    musicBeeValue: "musicbee-a",
+                    phoneValue: "Music/New/A.mp3",
+                    phonePathProof: PhonePathProof.Proven)
+            });
+
+        Assert.Equal(PlaylistDifferenceKind.PhonePath, diff.Kind);
+    }
+
+    [Fact]
     public void TakingCompleteSideCanUseOtherSidesOrder()
     {
         PlaylistDiff diff = Compare(

@@ -1272,6 +1272,7 @@ namespace MusicBeePlugin
             applyAllButton.Enabled = !busy
                 && reviewDrafts.Values.Any(item =>
                     item.Action != PlaylistLandingAction.None
+                    && item.IsConfirmed
                     && !item.IsStale);
             activityLabel.Text = playlistRows.Count + " playlist pairs";
         }
@@ -1432,6 +1433,15 @@ namespace MusicBeePlugin
                 membershipGrid.Rows[index].Cells["TakePhone"].ReadOnly = phoneBlocked;
                 membershipGrid.Rows[index].Cells["TakePhone"].ToolTipText =
                     phoneReason ?? string.Empty;
+                string resolutionReason =
+                    occurrence.PhoneEntry?.UnavailableReason ?? string.Empty;
+                membershipGrid.Rows[index].Cells["PhoneTrack"].ToolTipText =
+                    resolutionReason;
+                if (resolutionReason.Length > 0)
+                {
+                    membershipGrid.Rows[index].Cells["Change"].ToolTipText =
+                        resolutionReason;
+                }
             }
 
             membershipGrid.CellValueChanged -= MembershipGridCellValueChanged;

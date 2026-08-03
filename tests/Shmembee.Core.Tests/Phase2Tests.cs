@@ -46,6 +46,7 @@ public sealed class Phase2Tests
     [InlineData("1-01 - Trinkets.mp3", "Trinkets", 1, 1)]
     [InlineData("1-01 Trinkets.mp3", "Trinkets", 1, 1)]
     [InlineData("17 - Twinz.mp3", "Twinz", null, 17)]
+    [InlineData("1- - Wicked Game.mp3", "Wicked Game", null, null)]
     public void PhoneFileNameParserSupportsCurrentAndLegacyTemplates(
         string fileName,
         string expectedTitle,
@@ -62,6 +63,15 @@ public sealed class Phase2Tests
     [Theory]
     [InlineData("02 - EVERGLOW - DUN DUN.mp3", "EVERGLOW", "DUN DUN", 2)]
     [InlineData("Chris Isaak - Wicked Game.mp3", "Chris Isaak", "Wicked Game", null)]
+    [InlineData("- Chris Isaak - Wicked Game.mp3", "Chris Isaak", "Wicked Game", null)]
+    [InlineData("09 - Boney M. - Rasputin.mp3", "Boney M", "Rasputin", 9)]
+    [InlineData("23 - N.W.A. - Express Yourself.mp3", "N.W.A", "Express Yourself", 23)]
+    [InlineData(
+        "04 - Dale Earnhardt Jr. Jr. - Dancefloor.mp3",
+        "Dale Earnhardt Jr. Jr",
+        "Dancefloor",
+        4)]
+    [InlineData("The 1st Mini Album-02 - DUN DUN.mp3", "EVERGLOW 에버글로우", "DUN DUN", 2)]
     public void PhoneFileNameParserSupportsArtistBasedPhoneTemplate(
         string fileName,
         string artist,
@@ -75,6 +85,217 @@ public sealed class Phase2Tests
         Assert.Equal(expectedTitle, parsed.Title);
         Assert.Null(parsed.DiscNumber);
         Assert.Equal(expectedTrack, parsed.TrackNumber);
+    }
+
+    [Fact]
+    public void ResolverMatchesRealPostReorganizationEverglowPath()
+    {
+        PhoneFileNameMetadata parsed = PhoneFileNameParser.Parse(
+            "The 1st Mini Album-02 - DUN DUN.mp3",
+            "EVERGLOW 에버글로우");
+        var expected = new LibraryTrack(
+            "everglow",
+            @"D:\Music\EVERGLOW 에버글로우\REMINISCENCE\02 EVERGLOW 에버글로우 - DUN DUN.mp3",
+            artist: "EVERGLOW 에버글로우",
+            title: "DUN DUN",
+            album: "REMINISCENCE",
+            trackNumber: 2);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/EVERGLOW 에버글로우/REMINISCENCE/The 1st Mini Album-02 - DUN DUN.mp3",
+                artist: "EVERGLOW 에버글로우",
+                title: parsed.Title,
+                album: "REMINISCENCE",
+                trackNumber: parsed.TrackNumber),
+            new[] { expected });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverMatchesCompilationFolderByAlbumArtist()
+    {
+        var expected = new LibraryTrack(
+            "princess-and-frog",
+            @"D:\Music\Randy Newman\The Princess and the Frog\13 Randy Newman - The Frog Hunters - Gator Down.mp3",
+            artist: "Randy Newman",
+            title: "The Frog Hunters - Gator Down",
+            durationSeconds: 215,
+            albumArtist: "Various Artists",
+            album: "The Princess and the Frog",
+            trackNumber: 13);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Various Artists/The Princess and the Frog/13 - The Frog Hunters - Gator Down.mp3",
+                artist: "Various Artists",
+                title: "The Frog Hunters - Gator Down",
+                durationSeconds: 215,
+                albumArtist: "Various Artists",
+                album: "The Princess and the Frog",
+                trackNumber: 13),
+            new[]
+            {
+                expected,
+                new LibraryTrack(
+                    "wrong-track",
+                    @"D:\Music\Other\The Princess and the Frog\14 Other.mp3",
+                    artist: "Other",
+                    title: "The Frog Hunters - Gator Down",
+                    durationSeconds: 215,
+                    albumArtist: "Various Artists",
+                    album: "The Princess and the Frog",
+                    trackNumber: 14)
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverUsesAlbumTrackAndDurationWhenFolderArtistIsNotTaggedArtist()
+    {
+        var expected = new LibraryTrack(
+            "beauty-and-beast",
+            @"D:\Music\Celine Dion & Peabo Bryson\Beauty And The Beast\18 Beauty And The Beast.mp3",
+            artist: "Celine Dion & Peabo Bryson",
+            title: "Beauty And The Beast",
+            durationSeconds: 247,
+            albumArtist: "Alan Menken",
+            album: "Beauty And The Beast",
+            trackNumber: 18);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Various Artists/Beauty And The Beast/18 - Beauty And The Beast.mp3",
+                artist: "Various Artists",
+                title: "Beauty And The Beast",
+                durationSeconds: 247,
+                albumArtist: "Various Artists",
+                album: "Beauty And The Beast",
+                trackNumber: 18),
+            new[]
+            {
+                expected,
+                new LibraryTrack(
+                    "different-recording",
+                    @"D:\Music\Various Artists\Beauty And The Beast\10 Beauty And The Beast.mp3",
+                    artist: "Various Artists",
+                    title: "Beauty And The Beast",
+                    durationSeconds: 167,
+                    albumArtist: "Various Artists",
+                    album: "Beauty And The Beast",
+                    trackNumber: 10)
+            });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverMatchesPhoneTitleWhenLibraryTitleIncludesArtistPrefix()
+    {
+        var expected = new LibraryTrack(
+            "frog-hunters",
+            @"D:\Music\Randy Newman\The Princess and the Frog\13 Randy Newman - The Frog Hunters - Gator Down.mp3",
+            artist: "Randy Newman",
+            title: "Randy Newman - The Frog Hunters - Gator Down",
+            durationSeconds: 364,
+            albumArtist: "Various Artists",
+            album: "The Princess and the Frog",
+            trackNumber: null);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Randy Newman/The Princess and the Frog/13 - The Frog Hunters - Gator Down.mp3",
+                artist: "Randy Newman",
+                title: "The Frog Hunters - Gator Down",
+                durationSeconds: 364,
+                albumArtist: "Randy Newman",
+                album: "The Princess and the Frog",
+                trackNumber: 13),
+            new[] { expected });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverUsesPhoneTrackNumberWhenLibraryTrackNumberIsMissing()
+    {
+        var expected = new LibraryTrack(
+            "missing-number",
+            @"D:\Music\Alan Menken\Hercules\1-02 - Go the Distance.mp3",
+            artist: "Michael Bolton",
+            title: "Go the Distance",
+            durationSeconds: 282,
+            album: "Hercules",
+            trackNumber: null);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Alan Menken/Hercules/1-02 - Go the Distance.mp3",
+                artist: "Alan Menken",
+                title: "Go the Distance",
+                durationSeconds: 282,
+                albumArtist: "Alan Menken",
+                album: "Hercules",
+                discNumber: 1,
+                trackNumber: 2),
+            new[] { expected });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverMatchesCanonicallyEquivalentUnicodeMetadata()
+    {
+        var expected = new LibraryTrack(
+            "accented",
+            @"D:\Music\Beyoncé\Album\01 - Song.mp3",
+            artist: "Beyoncé",
+            title: "Café",
+            album: "Album",
+            trackNumber: 1);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Beyoncé/Album/01 - Café.mp3",
+                artist: "Beyoncé",
+                title: "Café",
+                album: "Album",
+                trackNumber: 1),
+            new[] { expected });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverRejectsExplicitTrackNumberMismatch()
+    {
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Artist/Album/02 - Song.mp3",
+                artist: "Artist",
+                title: "Song",
+                album: "Album",
+                trackNumber: 2),
+            new[]
+            {
+                new LibraryTrack(
+                    "wrong-track",
+                    @"D:\Music\Artist\Album\03 - Song.mp3",
+                    artist: "Artist",
+                    title: "Song",
+                    album: "Album",
+                    trackNumber: 3)
+            });
+
+        Assert.Equal(ResolutionStatus.Unmatched, result.Status);
     }
 
     [Fact]

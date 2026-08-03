@@ -36,6 +36,26 @@ namespace MusicBeePlugin
                 .ToList();
         }
 
+        public MusicLibraryTrack ReadTrack(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                throw new ArgumentException(
+                    "A MusicBee track URL is required.",
+                    nameof(url));
+            }
+
+            return new MusicLibraryTrack(
+                url,
+                GetTag(url, Plugin.MetaDataType.Artist),
+                GetTag(url, Plugin.MetaDataType.TrackTitle),
+                ParseDuration(GetProperty(url, Plugin.FilePropertyType.Duration)),
+                GetTag(url, Plugin.MetaDataType.AlbumArtist),
+                GetTag(url, Plugin.MetaDataType.Album),
+                ParseNumber(GetTag(url, Plugin.MetaDataType.DiscNo)),
+                ParseNumber(GetTag(url, Plugin.MetaDataType.TrackNo)));
+        }
+
         public IReadOnlyList<MusicPlaylist> ReadPlaylists()
         {
             if (api.Playlist_QueryPlaylists == null

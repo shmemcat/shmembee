@@ -245,6 +245,9 @@ public sealed class PlaylistCatalogTests : IDisposable
             Array.Empty<MusicLibraryTrack>();
 
         public IReadOnlyList<MusicPlaylist> ReadPlaylists() => playlists;
+
+        public MusicLibraryTrack ReadTrack(string url) =>
+            new(url, null, null, null);
     }
 
     private sealed class ThrowingMusicReader : IMusicLibraryReader
@@ -254,6 +257,9 @@ public sealed class PlaylistCatalogTests : IDisposable
 
         public IReadOnlyList<MusicPlaylist> ReadPlaylists() =>
             throw new IOException("unavailable");
+
+        public MusicLibraryTrack ReadTrack(string url) =>
+            new(url, null, null, null);
     }
 
     private sealed class PhoneReader : IPhonePlaylistCatalogReader

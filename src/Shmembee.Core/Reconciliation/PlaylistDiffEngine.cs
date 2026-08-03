@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using Shmembee.Core.Paths;
 using Shmembee.Core.Playlists;
 
 namespace Shmembee.Core.Reconciliation
@@ -22,6 +23,7 @@ namespace Shmembee.Core.Reconciliation
     public enum PlaylistDifferenceKind
     {
         Identical,
+        PhonePath,
         OrderOnly,
         Membership
     }
@@ -221,13 +223,28 @@ namespace Shmembee.Core.Reconciliation
             IReadOnlyList<string> leftOrder = left.Select(entry => entry.Key).ToList();
             IReadOnlyList<string> rightOrder = right.Select(entry => entry.Key).ToList();
             bool membershipEqual = keys.Count == left.Count && left.Count == right.Count;
+            bool phonePathEqual = occurrences.All(occurrence =>
+                occurrence.PhoneEntry == null
+                || occurrence.MusicBeeEntry == null
+                || PhonePathsEqual(
+                    occurrence.PhoneEntry.SourceValue,
+                    occurrence.MusicBeeEntry.ValueFor(PlaylistSide.Phone)));
             PlaylistDifferenceKind kind = !membershipEqual
                 ? PlaylistDifferenceKind.Membership
-                : leftOrder.SequenceEqual(rightOrder, StringComparer.Ordinal)
-                    ? PlaylistDifferenceKind.Identical
-                    : PlaylistDifferenceKind.OrderOnly;
+                : !phonePathEqual
+                    ? PlaylistDifferenceKind.PhonePath
+                    : leftOrder.SequenceEqual(rightOrder, StringComparer.Ordinal)
+                        ? PlaylistDifferenceKind.Identical
+                        : PlaylistDifferenceKind.OrderOnly;
             return new PlaylistDiff(kind, occurrences, leftOrder, rightOrder);
         }
+
+        private static bool PhonePathsEqual(string source, string? expected) =>
+            expected != null
+            && string.Equals(
+                TrackPathNormalizer.NormalizePhonePath(source),
+                TrackPathNormalizer.NormalizePhonePath(expected),
+                StringComparison.OrdinalIgnoreCase);
 
         private static List<IndexedEntry> Index(
             IEnumerable<PlaylistSideEntry> entries,

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace Shmembee.Core.Paths
 {
@@ -15,7 +16,9 @@ namespace Shmembee.Core.Paths
                 throw new ArgumentException("A track path is required.", nameof(path));
             }
 
-            string normalized = path.Trim().Replace('\\', '/');
+            string normalized = path.Trim()
+                .Replace('\\', '/')
+                .Normalize(NormalizationForm.FormC);
             while (normalized.StartsWith("./", StringComparison.Ordinal))
             {
                 normalized = normalized.Substring(2);
@@ -37,7 +40,9 @@ namespace Shmembee.Core.Paths
                 throw new ArgumentException("A track path is required.", nameof(path));
             }
 
-            string normalized = path.Trim().Replace('/', '\\');
+            string normalized = path.Trim()
+                .Replace('/', '\\')
+                .Normalize(NormalizationForm.FormC);
             while (normalized.Contains("\\\\"))
             {
                 normalized = normalized.Replace("\\\\", "\\");
@@ -48,7 +53,9 @@ namespace Shmembee.Core.Paths
 
         public static string GetFileNameKey(string path)
         {
-            string normalized = path.Trim().Replace('\\', '/');
+            string normalized = path.Trim()
+                .Replace('\\', '/')
+                .Normalize(NormalizationForm.FormC);
             int separator = normalized.LastIndexOf('/');
             return (separator < 0 ? normalized : normalized.Substring(separator + 1))
                 .ToUpperInvariant();
