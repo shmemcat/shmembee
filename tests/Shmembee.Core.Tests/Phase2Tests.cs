@@ -298,6 +298,75 @@ public sealed class Phase2Tests
         Assert.Equal(ResolutionStatus.Unmatched, result.Status);
     }
 
+    [Theory]
+    [InlineData("Fairy Tale - Going Home", "Fairy Tale   Going Home")]
+    [InlineData("Grizabella, The Glamour Cat", "Grizabella The Glamour Cat")]
+    public void ResolverUsesExactTitleBeforeLossyMetadataMatch(
+        string expectedTitle,
+        string lossyDuplicateTitle)
+    {
+        var expected = new LibraryTrack(
+            "expected",
+            @"D:\Music\Artist\Album\expected.mp3",
+            artist: "Artist",
+            title: expectedTitle,
+            album: "Album",
+            trackNumber: 11);
+        var lossyDuplicate = new LibraryTrack(
+            "duplicate",
+            @"D:\Music\Artist\Album\duplicate.mp3",
+            artist: "Artist",
+            title: lossyDuplicateTitle,
+            album: "Album",
+            trackNumber: 11);
+
+        ResolutionResult result = new TrackResolver().Resolve(
+            new TrackReference(
+                "Music/Artist/Album/11 - Artist - " + expectedTitle + ".mp3",
+                artist: "Artist",
+                title: expectedTitle,
+                album: "Album",
+                trackNumber: 11),
+            new[] { expected, lossyDuplicate });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
+    [Fact]
+    public void ResolverUsesPlaylistUrlToDisambiguateStrongMetadataDuplicates()
+    {
+        var expected = new LibraryTrack(
+            "expected",
+            @"D:\Music\DIR EN GREY\PHALARIS\03 DIR EN GREY - The Perfume of Sins.mp3",
+            artist: "DIR EN GREY",
+            title: "The Perfume of Sins",
+            album: "PHALARIS",
+            trackNumber: 3);
+        var duplicate = new LibraryTrack(
+            "duplicate",
+            @"D:\Alternate\DIR EN GREY\PHALARIS\03 DIR EN GREY - The Perfume of Sins.mp3",
+            artist: "DIR EN GREY",
+            title: "The Perfume of Sins",
+            album: "PHALARIS",
+            trackNumber: 3);
+
+        ResolutionResult result = new TrackResolver().CreateIndex(
+                new[] { expected, duplicate })
+            .Resolve(
+                new TrackReference(
+                    "Music/DIR EN GREY/PHALARIS/03 - DIR EN GREY - The Perfume of Sins.mp3",
+                    artist: "DIR EN GREY",
+                    title: "The Perfume of Sins",
+                    album: "PHALARIS",
+                    trackNumber: 3),
+                approvedMappings: null,
+                preferredUrls: new[] { expected.Url });
+
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Same(expected, result.Match);
+    }
+
     [Fact]
     public void ResolverUsesApprovedMappingBeforeAmbiguousFilename()
     {

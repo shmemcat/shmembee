@@ -336,6 +336,40 @@ namespace Shmembee.Core.Resolution
                             track.TrackNumber,
                             reference.TrackNumber))
                     .ToList();
+                List<LibraryTrack> exactTitleMatches = metadataMatches
+                    .Where(track => TrackResolver.ExactMetadataEquals(
+                        track.Title,
+                        reference.Title))
+                    .ToList();
+                if (exactTitleMatches.Count > 0)
+                {
+                    metadataMatches = exactTitleMatches;
+                }
+
+                List<LibraryTrack> exactArtistMatches = metadataMatches
+                    .Where(track => TrackResolver.ExactMetadataEquals(
+                        track.Artist,
+                        reference.Artist))
+                    .ToList();
+                if (exactArtistMatches.Count > 0)
+                {
+                    metadataMatches = exactArtistMatches;
+                }
+
+                if (metadataMatches.Count > 1
+                    && preferredUrlKeys != null)
+                {
+                    List<LibraryTrack> preferredMatches = metadataMatches
+                        .Where(track => preferredUrlKeys.Contains(
+                            TrackPathNormalizer.NormalizeWindowsPath(
+                                track.Url)))
+                        .ToList();
+                    if (preferredMatches.Count == 1)
+                    {
+                        metadataMatches = preferredMatches;
+                    }
+                }
+
                 result = FromCandidates(
                     metadataMatches,
                     MatchConfidence.StrongMetadata,

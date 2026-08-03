@@ -35,6 +35,15 @@ namespace Shmembee.Core.Reconciliation
         PhoneOnly
     }
 
+    public enum PlaylistOccurrenceChange
+    {
+        Unchanged,
+        AddedInMusicBee,
+        AddedOnPhone,
+        RemovedFromMusicBee,
+        RemovedFromPhone
+    }
+
     public enum OccurrenceChoice
     {
         MusicBee,
@@ -94,7 +103,8 @@ namespace Shmembee.Core.Reconciliation
             int? musicBeeIndex,
             int? phoneIndex,
             PlaylistSideEntry? musicBeeEntry,
-            PlaylistSideEntry? phoneEntry)
+            PlaylistSideEntry? phoneEntry,
+            bool wasInAcceptedBaseline)
         {
             Key = key;
             Track = track;
@@ -103,6 +113,7 @@ namespace Shmembee.Core.Reconciliation
             PhoneIndex = phoneIndex;
             MusicBeeEntry = musicBeeEntry;
             PhoneEntry = phoneEntry;
+            WasInAcceptedBaseline = wasInAcceptedBaseline;
         }
 
         public string Key { get; }
@@ -119,12 +130,44 @@ namespace Shmembee.Core.Reconciliation
 
         public PlaylistSideEntry? PhoneEntry { get; }
 
+        public bool WasInAcceptedBaseline { get; }
+
         public OccurrenceMembership Membership =>
             MusicBeeEntry != null && PhoneEntry != null
                 ? OccurrenceMembership.Both
                 : MusicBeeEntry != null
                     ? OccurrenceMembership.MusicBeeOnly
                     : OccurrenceMembership.PhoneOnly;
+
+        public PlaylistOccurrenceChange Change =>
+            Membership == OccurrenceMembership.Both
+                ? PlaylistOccurrenceChange.Unchanged
+                : Membership == OccurrenceMembership.MusicBeeOnly
+                    ? WasInAcceptedBaseline
+                        ? PlaylistOccurrenceChange.RemovedFromPhone
+                        : PlaylistOccurrenceChange.AddedInMusicBee
+                    : WasInAcceptedBaseline
+                        ? PlaylistOccurrenceChange.RemovedFromMusicBee
+                        : PlaylistOccurrenceChange.AddedOnPhone;
+
+        public OccurrenceChoice DefaultChoice
+        {
+            get
+            {
+                if (Change == PlaylistOccurrenceChange.RemovedFromMusicBee
+                    || Change == PlaylistOccurrenceChange.RemovedFromPhone)
+                {
+                    return OccurrenceChoice.Exclude;
+                }
+
+                OccurrenceChoice choice = Membership == OccurrenceMembership.PhoneOnly
+                    ? OccurrenceChoice.Phone
+                    : OccurrenceChoice.MusicBee;
+                return IsChoiceBlocked(choice, out _)
+                    ? OccurrenceChoice.Exclude
+                    : choice;
+            }
+        }
 
         public bool IsChoiceBlocked(OccurrenceChoice choice, out string? reason)
         {
@@ -192,10 +235,21 @@ namespace Shmembee.Core.Reconciliation
     {
         public static PlaylistDiff Compare(
             IEnumerable<PlaylistSideEntry> musicBee,
-            IEnumerable<PlaylistSideEntry> phone)
+            IEnumerable<PlaylistSideEntry> phone,
+            IEnumerable<TrackIdentity>? acceptedBaseline = null)
         {
             List<IndexedEntry> left = Index(musicBee, nameof(musicBee));
             List<IndexedEntry> right = Index(phone, nameof(phone));
+            HashSet<string> baselineKeys = acceptedBaseline == null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(
+                    Index(
+                        acceptedBaseline.Select(track => new PlaylistSideEntry(
+                            track,
+                            track.Value)),
+                        nameof(acceptedBaseline))
+                        .Select(entry => entry.Key),
+                    StringComparer.Ordinal);
             var leftByKey = left.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
             var rightByKey = right.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
             var keys = new HashSet<string>(leftByKey.Keys, StringComparer.Ordinal);
@@ -214,7 +268,8 @@ namespace Shmembee.Core.Reconciliation
                         leftEntry?.Index,
                         rightEntry?.Index,
                         leftEntry?.Entry,
-                        rightEntry?.Entry);
+                        rightEntry?.Entry,
+                        baselineKeys.Contains(key));
                 })
                 .OrderBy(entry => entry.MusicBeeIndex ?? int.MaxValue)
                 .ThenBy(entry => entry.PhoneIndex ?? int.MaxValue)

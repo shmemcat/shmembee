@@ -276,7 +276,8 @@ namespace MusicBeePlugin
                 mediaPaths);
             PlaylistDiff diff = PlaylistDiffEngine.Compare(
                 musicBeeTracks.Select(ToMusicBeeDiffEntry),
-                phoneTracks.Select(ToPhoneDiffEntry));
+                phoneTracks.Select(ToPhoneDiffEntry),
+                baseline?.Tracks.Select(track => new TrackIdentity(track.TrackId)));
             return new PlaylistDetailDiff(
                 context,
                 playlist.Name,
@@ -329,13 +330,6 @@ namespace MusicBeePlugin
                     finalized.Freshness == ReviewedDraftFreshness.StaleChecksums
                         ? "Inputs changed before apply. Refresh and review again."
                         : string.Join(" ", finalized.BlockedReasons));
-            }
-
-            if (finalized.Plan.MusicBeeEntries.Count == 0
-                && finalized.Plan.PhoneEntries.Count == 0)
-            {
-                return SynchronizationApplyResult.Failed(
-                    "An empty reviewed result is not a delete operation.");
             }
 
             if (finalized.Plan.PhoneEntries.Any(string.IsNullOrWhiteSpace))
@@ -1449,7 +1443,8 @@ namespace MusicBeePlugin
                             mediaPaths);
                     PlaylistDiff diff = PlaylistDiffEngine.Compare(
                         musicBeeTracks.Select(ToMusicBeeDiffEntry),
-                        phoneTracks.Select(ToPhoneDiffEntry));
+                        phoneTracks.Select(ToPhoneDiffEntry),
+                        baseline?.Tracks.Select(track => new TrackIdentity(track.TrackId)));
                     return RowFromDiff(
                         catalog,
                         musicBeeState,

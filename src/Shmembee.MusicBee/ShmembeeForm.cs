@@ -1409,11 +1409,15 @@ namespace MusicBeePlugin
                 }
 
                 OccurrenceChoice choice = draft.ChoiceFor(occurrence);
-                string marker = occurrence.Membership == OccurrenceMembership.Both
+                string marker = occurrence.Change == PlaylistOccurrenceChange.Unchanged
                     ? "="
-                    : occurrence.Membership == OccurrenceMembership.MusicBeeOnly
-                        ? "+"
-                        : "−";
+                    : occurrence.Change == PlaylistOccurrenceChange.AddedInMusicBee
+                        ? "MusicBee +"
+                        : occurrence.Change == PlaylistOccurrenceChange.AddedOnPhone
+                            ? "Phone +"
+                            : occurrence.Change == PlaylistOccurrenceChange.RemovedFromMusicBee
+                                ? "MusicBee −"
+                                : "Phone −";
                 int index = membershipGrid.Rows.Add(
                     choice == OccurrenceChoice.MusicBee,
                     occurrence.MusicBeeEntry?.SourceValue ?? string.Empty,
@@ -1442,6 +1446,11 @@ namespace MusicBeePlugin
                     membershipGrid.Rows[index].Cells["Change"].ToolTipText =
                         resolutionReason;
                 }
+                else
+                {
+                    membershipGrid.Rows[index].Cells["Change"].ToolTipText =
+                        DescribeOccurrenceChange(occurrence.Change);
+                }
             }
 
             membershipGrid.CellValueChanged -= MembershipGridCellValueChanged;
@@ -1449,6 +1458,19 @@ namespace MusicBeePlugin
             membershipGrid.CurrentCellDirtyStateChanged -= MembershipGridDirtyStateChanged;
             membershipGrid.CurrentCellDirtyStateChanged += MembershipGridDirtyStateChanged;
         }
+
+        private static string DescribeOccurrenceChange(PlaylistOccurrenceChange change) =>
+            change == PlaylistOccurrenceChange.AddedInMusicBee
+                ? "Added to the MusicBee playlist since the accepted baseline."
+                : change == PlaylistOccurrenceChange.AddedOnPhone
+                    ? "Added to the phone playlist since the accepted baseline."
+                    : change == PlaylistOccurrenceChange.RemovedFromMusicBee
+                        ? "Removed from the MusicBee playlist since the accepted baseline. "
+                            + "It is excluded by default so the phone playlist removal is propagated."
+                        : change == PlaylistOccurrenceChange.RemovedFromPhone
+                            ? "Removed from the phone playlist since the accepted baseline. "
+                                + "It is excluded by default so the MusicBee playlist removal is propagated."
+                            : "Present in both playlists.";
 
         private void MembershipGridDirtyStateChanged(object? sender, EventArgs e)
         {
@@ -2096,12 +2118,15 @@ namespace MusicBeePlugin
             PhoneChecksum = row.PhoneChecksum;
             MusicBeeOccurrenceKeys = new HashSet<string>(
                 row.Diff?.Occurrences
-                    .Where(item => item.Membership == OccurrenceMembership.Both)
+                    .Where(item => item.DefaultChoice == OccurrenceChoice.MusicBee)
                     .Select(item => item.Key)
                 ?? Enumerable.Empty<string>(),
                 StringComparer.Ordinal);
             PhoneOccurrenceKeys = new HashSet<string>(
-                Enumerable.Empty<string>(),
+                row.Diff?.Occurrences
+                    .Where(item => item.DefaultChoice == OccurrenceChoice.Phone)
+                    .Select(item => item.Key)
+                ?? Enumerable.Empty<string>(),
                 StringComparer.Ordinal);
         }
 

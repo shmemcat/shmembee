@@ -32,6 +32,104 @@ public sealed class PlaylistDiffEngineTests
     }
 
     [Fact]
+    public void BaselineOccurrenceMissingFromMusicBeeDefaultsToRemoval()
+    {
+        PlaylistDiff diff = Compare(
+            Array.Empty<PlaylistSideEntry>(),
+            new[] { Entry("a") },
+            new[] { Track("a") });
+
+        PlaylistOccurrence occurrence = Assert.Single(diff.Occurrences);
+        Assert.Equal(OccurrenceMembership.PhoneOnly, occurrence.Membership);
+        Assert.Equal(
+            PlaylistOccurrenceChange.RemovedFromMusicBee,
+            occurrence.Change);
+        Assert.Equal(OccurrenceChoice.Exclude, occurrence.DefaultChoice);
+    }
+
+    [Fact]
+    public void BaselineOccurrenceMissingFromPhoneDefaultsToRemoval()
+    {
+        PlaylistDiff diff = Compare(
+            new[] { Entry("a") },
+            Array.Empty<PlaylistSideEntry>(),
+            new[] { Track("a") });
+
+        PlaylistOccurrence occurrence = Assert.Single(diff.Occurrences);
+        Assert.Equal(OccurrenceMembership.MusicBeeOnly, occurrence.Membership);
+        Assert.Equal(
+            PlaylistOccurrenceChange.RemovedFromPhone,
+            occurrence.Change);
+        Assert.Equal(OccurrenceChoice.Exclude, occurrence.DefaultChoice);
+    }
+
+    [Fact]
+    public void NewOneSidedOccurrencesDefaultToPropagation()
+    {
+        PlaylistDiff diff = Compare(
+            new[] { Entry("existing"), Entry("musicbee-new") },
+            new[] { Entry("existing"), Entry("phone-new") },
+            new[] { Track("existing") });
+
+        PlaylistOccurrence musicBee = diff.Occurrences.Single(
+            occurrence => occurrence.Track.Value == "musicbee-new");
+        PlaylistOccurrence phone = diff.Occurrences.Single(
+            occurrence => occurrence.Track.Value == "phone-new");
+        Assert.Equal(PlaylistOccurrenceChange.AddedInMusicBee, musicBee.Change);
+        Assert.Equal(OccurrenceChoice.MusicBee, musicBee.DefaultChoice);
+        Assert.Equal(PlaylistOccurrenceChange.AddedOnPhone, phone.Change);
+        Assert.Equal(OccurrenceChoice.Phone, phone.DefaultChoice);
+    }
+
+    [Fact]
+    public void BaselineOrdinalsDistinguishDuplicateRemovalFromAddition()
+    {
+        PlaylistDiff removed = Compare(
+            new[] { Entry("a") },
+            new[] { Entry("a"), Entry("a") },
+            new[] { Track("a"), Track("a") });
+        PlaylistOccurrence removedSecond = removed.Occurrences.Single(
+            occurrence => occurrence.Ordinal == 2);
+
+        PlaylistDiff added = Compare(
+            new[] { Entry("a"), Entry("a") },
+            new[] { Entry("a") },
+            new[] { Track("a") });
+        PlaylistOccurrence addedSecond = added.Occurrences.Single(
+            occurrence => occurrence.Ordinal == 2);
+
+        Assert.Equal(
+            PlaylistOccurrenceChange.RemovedFromMusicBee,
+            removedSecond.Change);
+        Assert.Equal(OccurrenceChoice.Exclude, removedSecond.DefaultChoice);
+        Assert.Equal(
+            PlaylistOccurrenceChange.AddedInMusicBee,
+            addedSecond.Change);
+        Assert.Equal(OccurrenceChoice.MusicBee, addedSecond.DefaultChoice);
+    }
+
+    [Fact]
+    public void DefaultDecisionsRemoveBaselineDeletionAndPropagateAddition()
+    {
+        PlaylistDiff diff = Compare(
+            new[] { Entry("kept"), Entry("added") },
+            new[] { Entry("kept"), Entry("removed") },
+            new[] { Track("kept"), Track("removed") });
+
+        PlaylistBuildResult result = PlaylistResultBuilder.BuildCustom(
+            diff,
+            diff.Occurrences.Select(occurrence => new PlaylistOccurrenceDecision(
+                occurrence.Key,
+                occurrence.DefaultChoice)),
+            PlaylistSide.MusicBee);
+
+        Assert.False(result.IsBlocked);
+        Assert.Equal(
+            new[] { "kept", "added" },
+            result.Entries.Select(entry => entry.Track.Value));
+    }
+
+    [Fact]
     public void CompareClassifiesMembershipEqualReorderingAsOrderOnly()
     {
         PlaylistDiff diff = Compare(
@@ -361,8 +459,9 @@ public sealed class PlaylistDiffEngineTests
 
     private static PlaylistDiff Compare(
         IEnumerable<PlaylistSideEntry> musicBee,
-        IEnumerable<PlaylistSideEntry> phone) =>
-        PlaylistDiffEngine.Compare(musicBee, phone);
+        IEnumerable<PlaylistSideEntry> phone,
+        IEnumerable<TrackIdentity>? acceptedBaseline = null) =>
+        PlaylistDiffEngine.Compare(musicBee, phone, acceptedBaseline);
 
     private static PlaylistSideEntry Entry(string identity) =>
         new(Track(identity), identity);
