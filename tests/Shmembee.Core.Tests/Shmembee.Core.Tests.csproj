@@ -27,6 +27,8 @@
   <ItemGroup>
     <Compile Include="..\..\src\Shmembee.Windows\WpdSidecarPlaylistTransport.cs"
              Link="Windows\WpdSidecarPlaylistTransport.cs" />
+    <Compile Include="..\..\src\Shmembee.Windows\WpdDiagnosticJournal.cs"
+             Link="Windows\WpdDiagnosticJournal.cs" />
   </ItemGroup>
 
 </Project>

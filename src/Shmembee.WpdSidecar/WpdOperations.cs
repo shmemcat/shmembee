@@ -1,4 +1,5 @@
 #nullable disable
+#pragma warning disable CA1305 // Diagnostic numeric values are machine-readable JSON strings.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -42,9 +43,28 @@ namespace Shmembee.WpdSidecar
             new Guid("30000000-AE6C-4804-98BA-C57B46965FE7");
         private const int MaximumMediaFolderDepth = 64;
         private const int MaximumMediaObjectCount = 250000;
+        private const int MediaProgressIntervalMilliseconds = 500;
         private static readonly Guid UnspecifiedFormat = Guid.Empty;
 
         private string stage;
+        private readonly WpdDiagnosticJournal journal;
+        private readonly Action<MediaTraversalProgress> mediaProgress;
+
+        public WpdOperations(
+            WpdDiagnosticJournal journal = null,
+            Action<MediaTraversalProgress> mediaProgress = null)
+        {
+            this.journal = journal;
+            this.mediaProgress = mediaProgress;
+        }
+
+        private void Stage(string value, string substage = null)
+        {
+            stage = value;
+            journal?.Write(
+                "stage",
+                WpdDiagnosticJournal.Data("stage", value, "substage", substage));
+        }
 
         public OperationResponse Execute(OperationRequest request)
         {
@@ -52,13 +72,13 @@ namespace Shmembee.WpdSidecar
             try
             {
                 Validate(request);
-                stage = "resolve-device";
-                using (var session = WpdSession.Open(request.Device))
+                Stage("resolve-device", "enumerate-and-open");
+                using (var session = WpdSession.Open(request.Device, journal))
                 {
                     response.DeviceId = session.DeviceId;
-                    stage = "resolve-storage";
+                    Stage("resolve-storage", "exact-child");
                     response.StorageId = ResolveExact(session, DeviceRoot, request.Storage);
-                    stage = "resolve-folder";
+                    Stage("resolve-folder", "path-segments");
                     response.FolderId = ResolvePath(session, response.StorageId, request.Folder);
 
                     switch (request.Operation.ToLowerInvariant())
@@ -113,10 +133,30 @@ namespace Shmembee.WpdSidecar
                 response.Success = false;
                 response.Stage = stage ?? "request";
                 response.Error = exception.Message;
-                response.HResult = exception is COMException ? exception.HResult : (int?)null;
+                response.HResult = DeepestComHResult(exception);
+                var data = WpdDiagnosticJournal.Data(
+                    "stage", response.Stage,
+                    "deviceId", response.DeviceId,
+                    "storageId", response.StorageId,
+                    "folderId", response.FolderId,
+                    "originalObjectId", response.OriginalObjectId,
+                    "candidateObjectId", response.CandidateObjectId,
+                    "candidateName", response.CandidateName);
+                WpdDiagnosticJournal.AddException(data, exception);
+                journal?.Write("operation.failure", data);
             }
 
             return response;
+        }
+
+        private static int? DeepestComHResult(Exception exception)
+        {
+            int? result = null;
+            for (Exception current = exception; current != null; current = current.InnerException)
+            {
+                if (current is COMException) result = current.HResult;
+            }
+            return result;
         }
 
         private void Probe(WpdSession session, string folderId, string name,
@@ -406,6 +446,15 @@ namespace Shmembee.WpdSidecar
             var pending = new Stack<MediaFolder>();
             pending.Push(new MediaFolder(folderId, normalizedRoot, 0));
             int objectCount = 0;
+            int foldersCompleted = 0;
+            var elapsedTimer = System.Diagnostics.Stopwatch.StartNew();
+            long lastProgressMilliseconds = 0;
+            ReportMediaProgress(
+                objectCount,
+                foldersCompleted,
+                pending.Count,
+                paths.Count,
+                elapsedTimer.ElapsedMilliseconds);
             while (pending.Count > 0)
             {
                 MediaFolder folder = pending.Pop();
@@ -456,11 +505,58 @@ namespace Shmembee.WpdSidecar
                     {
                         paths.Add(relativePath);
                     }
+
+                    long elapsedMilliseconds = elapsedTimer.ElapsedMilliseconds;
+                    if (elapsedMilliseconds - lastProgressMilliseconds
+                        >= MediaProgressIntervalMilliseconds)
+                    {
+                        ReportMediaProgress(
+                            objectCount,
+                            foldersCompleted,
+                            pending.Count,
+                            paths.Count,
+                            elapsedMilliseconds);
+                        lastProgressMilliseconds = elapsedMilliseconds;
+                    }
                 }
+
+                foldersCompleted++;
             }
+            ReportMediaProgress(
+                objectCount,
+                foldersCompleted,
+                pending.Count,
+                paths.Count,
+                elapsedTimer.ElapsedMilliseconds);
             response.MediaPathsBase64 = paths
                 .Select(path => Convert.ToBase64String(Encoding.UTF8.GetBytes(path)))
                 .ToArray();
+        }
+
+        private void ReportMediaProgress(
+            int objectsScanned,
+            int foldersCompleted,
+            int foldersPending,
+            int mediaFilesFound,
+            long elapsedMilliseconds)
+        {
+            mediaProgress?.Invoke(new MediaTraversalProgress
+            {
+                ObjectsScanned = objectsScanned,
+                FoldersCompleted = foldersCompleted,
+                FoldersPending = foldersPending,
+                MediaFilesFound = mediaFilesFound,
+                ElapsedMilliseconds = elapsedMilliseconds
+            });
+        }
+
+        internal sealed class MediaTraversalProgress
+        {
+            public int ObjectsScanned { get; set; }
+            public int FoldersCompleted { get; set; }
+            public int FoldersPending { get; set; }
+            public int MediaFilesFound { get; set; }
+            public long ElapsedMilliseconds { get; set; }
         }
 
         private sealed class MediaFolder
@@ -516,14 +612,23 @@ namespace Shmembee.WpdSidecar
 
             try
             {
-                stage = "create-candidate";
+                Stage("create-candidate", "create-object-with-data");
+                journal?.Write("mutation.create.begin", WpdDiagnosticJournal.Data(
+                    "parentId", folderId, "name", response.CandidateName,
+                    "bytes", bytes.Length.ToString()));
                 response.CandidateObjectId = session.Create(
                     folderId, response.CandidateName, bytes);
+                journal?.Write("mutation.create.end", WpdDiagnosticJournal.Data(
+                    "objectId", response.CandidateObjectId,
+                    "parentId", folderId, "name", response.CandidateName));
                 stage = "verify-candidate";
                 Verify(session, response.CandidateObjectId, bytes);
 
                 string renameProbe = response.CandidateName + ".renamed";
-                stage = "probe-rename";
+                Stage("probe-rename", "set-object-name");
+                journal?.Write("mutation.rename", WpdDiagnosticJournal.Data(
+                    "objectId", response.CandidateObjectId,
+                    "from", response.CandidateName, "to", renameProbe));
                 session.Rename(response.CandidateObjectId, renameProbe);
                 if (!string.Equals(session.Name(response.CandidateObjectId),
                         renameProbe, StringComparison.Ordinal))
@@ -535,12 +640,18 @@ namespace Shmembee.WpdSidecar
 
                 if (response.OriginalObjectId != null)
                 {
-                    stage = "delete-original";
+                    Stage("delete-original", "delete-object");
+                    journal?.Write("mutation.delete", WpdDiagnosticJournal.Data(
+                        "objectId", response.OriginalObjectId, "name", name,
+                        "reason", "replace-original"));
                     session.Delete(response.OriginalObjectId);
                     originalDeleted = true;
                 }
 
-                stage = "promote-candidate";
+                Stage("promote-candidate", "set-final-name");
+                journal?.Write("mutation.rename", WpdDiagnosticJournal.Data(
+                    "objectId", response.CandidateObjectId,
+                    "from", renameProbe, "to", name));
                 session.Rename(response.CandidateObjectId, name);
                 if (!string.Equals(session.Name(response.CandidateObjectId),
                         name, StringComparison.Ordinal))
@@ -569,6 +680,11 @@ namespace Shmembee.WpdSidecar
                     }
                     catch (Exception cleanupException)
                     {
+                        var cleanup = WpdDiagnosticJournal.Data(
+                            "objectId", response.CandidateObjectId,
+                            "name", response.CandidateName);
+                        WpdDiagnosticJournal.AddException(cleanup, cleanupException);
+                        journal?.Write("cleanup.failure", cleanup);
                         throw new InvalidOperationException(
                             "The WPD operation failed: "
                             + primaryException.Message
@@ -601,7 +717,10 @@ namespace Shmembee.WpdSidecar
             {
                 return;
             }
-            stage = "delete-object";
+            Stage("delete-object", "delete-object");
+            journal?.Write("mutation.delete", WpdDiagnosticJournal.Data(
+                "objectId", response.OriginalObjectId, "name", name,
+                "reason", "requested-delete"));
             session.Delete(response.OriginalObjectId);
             stage = "verify-delete";
             if (ResolveOptionalExact(session, folderId, name) != null)
@@ -728,20 +847,28 @@ namespace Shmembee.WpdSidecar
             private readonly IPortableDeviceContent content;
             private readonly IPortableDeviceProperties properties;
             private readonly IPortableDeviceResources resources;
+            private readonly WpdDiagnosticJournal journal;
 
-            private WpdSession(string deviceId, IPortableDevice device)
+            private WpdSession(
+                string deviceId,
+                IPortableDevice device,
+                WpdDiagnosticJournal journal)
             {
                 DeviceId = deviceId;
                 this.device = device;
-                content = device.Content();
-                properties = content.Properties();
-                resources = content.Transfer();
+                this.journal = journal;
+                content = Timed("IPortableDevice.Content", () => device.Content());
+                properties = Timed("IPortableDeviceContent.Properties", () => content.Properties());
+                resources = Timed("IPortableDeviceContent.Transfer", () => content.Transfer());
             }
 
             public string DeviceId { get; }
 
-            public static WpdSession Open(string exactName)
+            public static WpdSession Open(
+                string exactName,
+                WpdDiagnosticJournal journal)
             {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
                 IPortableDeviceManager manager =
                     (IPortableDeviceManager)new PortableDeviceManager();
                 uint count = 0;
@@ -749,6 +876,7 @@ namespace Shmembee.WpdSidecar
                 var ids = new string[count];
                 manager.GetDevices(ids, ref count);
                 var matches = new List<string>();
+                var topology = new List<string>();
                 foreach (string id in ids)
                 {
                     uint length = 0;
@@ -756,9 +884,14 @@ namespace Shmembee.WpdSidecar
                     var chars = new StringBuilder((int)length);
                     manager.GetDeviceFriendlyName(id, chars, ref length);
                     string name = chars.ToString();
+                    topology.Add(id + "|" + name);
                     if (string.Equals(name, exactName, StringComparison.Ordinal))
                         matches.Add(id);
                 }
+                journal?.Write("device.topology", WpdDiagnosticJournal.Data(
+                    "requestedName", exactName,
+                    "deviceCount", count.ToString(),
+                    "devices", string.Join(";", topology)));
                 if (matches.Count != 1)
                     throw new InvalidOperationException("Expected exactly one device named '"
                         + exactName + "', found " + matches.Count + ".");
@@ -770,7 +903,28 @@ namespace Shmembee.WpdSidecar
                 values.SetUnsignedIntegerValue(in WpdClientMinor, 0);
                 IPortableDevice device = (IPortableDevice)new PortableDevice();
                 device.Open(matches[0], values);
-                return new WpdSession(matches[0], device);
+                timer.Stop();
+                journal?.Write("wpd.call", WpdDiagnosticJournal.Data(
+                    "call", "IPortableDevice.Open",
+                    "elapsedMs", timer.ElapsedMilliseconds.ToString(),
+                    "deviceId", matches[0]));
+                return new WpdSession(matches[0], device, journal);
+            }
+
+            private T Timed<T>(string call, Func<T> action)
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    return action();
+                }
+                finally
+                {
+                    timer.Stop();
+                    journal?.Write("wpd.call", WpdDiagnosticJournal.Data(
+                        "call", call,
+                        "elapsedMs", timer.ElapsedMilliseconds.ToString()));
+                }
             }
 
             private static PROPERTYKEY WpdClientName =
@@ -782,14 +936,26 @@ namespace Shmembee.WpdSidecar
 
             public IEnumerable<string> Children(string parent)
             {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
                 IEnumPortableDeviceObjectIDs enumerator =
                     content.EnumObjects(0, parent, null);
+                int count = 0;
                 while (true)
                 {
                     uint fetched = 0;
                     var ids = new string[1];
                     enumerator.Next(1, ids, out fetched);
-                    if (fetched == 0) yield break;
+                    if (fetched == 0)
+                    {
+                        timer.Stop();
+                        journal?.Write("wpd.call", WpdDiagnosticJournal.Data(
+                            "call", "EnumObjects/Next",
+                            "parentId", parent,
+                            "objectCount", count.ToString(),
+                            "elapsedMs", timer.ElapsedMilliseconds.ToString()));
+                        yield break;
+                    }
+                    count++;
                     yield return ids[0];
                 }
             }
@@ -843,8 +1009,22 @@ namespace Shmembee.WpdSidecar
             public byte[] Read(string objectId)
             {
                 PROPERTYKEY resource = DefaultResource;
-                IStream stream = resources.GetStream(
-                    objectId, in resource, STGM.STGM_READ, out uint optimal);
+                uint optimal = 0;
+                IStream stream = null;
+                var openTimer = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    stream = resources.GetStream(
+                        objectId, in resource, STGM.STGM_READ, out optimal);
+                }
+                finally
+                {
+                    openTimer.Stop();
+                    journal?.Write("wpd.call", WpdDiagnosticJournal.Data(
+                        "call", "IPortableDeviceResources.GetStream",
+                        "objectId", objectId,
+                        "elapsedMs", openTimer.ElapsedMilliseconds.ToString()));
+                }
                 try
                 {
                     using (var output = new MemoryStream())
@@ -853,12 +1033,22 @@ namespace Shmembee.WpdSidecar
                         var readPtr = Marshal.AllocCoTaskMem(sizeof(int));
                         try
                         {
+                            long total = 0;
+                            int chunks = 0;
                             while (true)
                             {
                                 stream.Read(buffer, buffer.Length, readPtr);
                                 int read = Marshal.ReadInt32(readPtr);
                                 if (read == 0) break;
                                 output.Write(buffer, 0, read);
+                                total += read;
+                                chunks++;
+                                journal?.Write("stream.progress", WpdDiagnosticJournal.Data(
+                                    "direction", "read",
+                                    "objectId", objectId,
+                                    "bytes", total.ToString(),
+                                    "chunks", chunks.ToString(),
+                                    "chunkBytes", read.ToString()));
                             }
                         }
                         finally { Marshal.FreeCoTaskMem(readPtr); }
@@ -891,6 +1081,7 @@ namespace Shmembee.WpdSidecar
                 try
                 {
                     int offset = 0;
+                    int chunks = 0;
                     int chunkSize = (int)Math.Max(4096, Math.Min(optimal, 1024 * 1024));
                     while (offset < bytes.Length)
                     {
@@ -906,6 +1097,14 @@ namespace Shmembee.WpdSidecar
                                 throw new IOException("WPD stream accepted " + written
                                     + " of " + count + " bytes.");
                             offset += written;
+                            chunks++;
+                            journal?.Write("stream.progress", WpdDiagnosticJournal.Data(
+                                "direction", "write",
+                                "parentId", parent,
+                                "bytes", offset.ToString(),
+                                "chunks", chunks.ToString(),
+                                "chunkBytes", written.ToString(),
+                                "totalBytes", bytes.Length.ToString()));
                         }
                         finally { Marshal.FreeCoTaskMem(writtenPtr); }
                     }
@@ -970,12 +1169,33 @@ namespace Shmembee.WpdSidecar
             public void Dispose()
             {
                 try { device.Close(); }
+                catch (Exception exception)
+                {
+                    var data = WpdDiagnosticJournal.Data("cleanup", "IPortableDevice.Close");
+                    WpdDiagnosticJournal.AddException(data, exception);
+                    journal?.Write("cleanup.failure", data);
+                    throw;
+                }
                 finally
                 {
-                    Marshal.FinalReleaseComObject(resources);
-                    Marshal.FinalReleaseComObject(properties);
-                    Marshal.FinalReleaseComObject(content);
-                    Marshal.FinalReleaseComObject(device);
+                    Release(resources, "resources");
+                    Release(properties, "properties");
+                    Release(content, "content");
+                    Release(device, "device");
+                }
+            }
+
+            private void Release(object value, string name)
+            {
+                try
+                {
+                    Marshal.FinalReleaseComObject(value);
+                }
+                catch (Exception exception)
+                {
+                    var data = WpdDiagnosticJournal.Data("cleanup", "release-" + name);
+                    WpdDiagnosticJournal.AddException(data, exception);
+                    journal?.Write("cleanup.failure", data);
                 }
             }
         }

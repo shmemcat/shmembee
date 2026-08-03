@@ -3,9 +3,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 using System.Linq;
+using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Shmembee.Application.Ports;
 
 namespace Shmembee.Windows
@@ -14,7 +18,7 @@ namespace Shmembee.Windows
         IPlaylistFileTransport,
         IPhonePlaylistCatalogReader,
         IPhonePlaylistSnapshotReader,
-        IPhoneMediaPathReader,
+        IProgressivePhoneMediaPathReader,
         IPhonePlaylistBackupTransport
     {
         private readonly string sidecarPath;
@@ -24,6 +28,8 @@ namespace Shmembee.Windows
         private readonly string mediaFolderPath;
         private readonly TimeSpan timeout;
         private readonly IWpdSidecarProcessRunner processRunner;
+        private readonly string diagnosticsPath;
+        private readonly string activityId = Guid.NewGuid().ToString("N");
 
         public WpdSidecarPlaylistTransport(
             string sidecarPath,
@@ -32,7 +38,8 @@ namespace Shmembee.Windows
             string folderPath,
             TimeSpan? timeout = null,
             IWpdSidecarProcessRunner processRunner = null,
-            string mediaFolderPath = null)
+            string mediaFolderPath = null,
+            string diagnosticsPath = null)
         {
             this.sidecarPath = Require(sidecarPath, nameof(sidecarPath));
             this.deviceName = Require(deviceName, nameof(deviceName));
@@ -48,6 +55,7 @@ namespace Shmembee.Windows
             }
 
             this.processRunner = processRunner ?? new WpdSidecarProcessRunner();
+            this.diagnosticsPath = WpdDiagnosticJournal.ResolvePath(diagnosticsPath);
         }
 
         public WpdSidecarResponse Probe()
@@ -72,6 +80,13 @@ namespace Shmembee.Windows
 
         public IReadOnlyList<string> ReadMediaPaths()
         {
+            return ReadMediaPaths(CancellationToken.None);
+        }
+
+        public IReadOnlyList<string> ReadMediaPaths(
+            CancellationToken cancellationToken,
+            IProgress<PhoneMediaTraversalProgress> progress = null)
+        {
             if (mediaFolderPath == null)
             {
                 throw new InvalidOperationException(
@@ -83,7 +98,9 @@ namespace Shmembee.Windows
                 null,
                 null,
                 false,
-                mediaFolderPath);
+                mediaFolderPath,
+                progress: progress,
+                cancellationToken: cancellationToken);
             return response.DecodeMediaPaths();
         }
 
@@ -182,9 +199,15 @@ namespace Shmembee.Windows
             bool allowNotFound,
             string requestedFolder = null,
             string backupFolderName = null,
-            string[] copiedNames = null)
+            string[] copiedNames = null,
+            IProgress<PhoneMediaTraversalProgress> progress = null,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             string operationId = Guid.NewGuid().ToString("N");
+            var journal = new WpdDiagnosticJournal(
+                diagnosticsPath,
+                activityId,
+                operationId);
             var request = new WpdSidecarRequest
             {
                 ProtocolVersion = 1,
@@ -196,16 +219,80 @@ namespace Shmembee.Windows
                 Name = backingName,
                 ContentBase64 = contentBase64,
                 BackupFolderName = backupFolderName,
-                CopiedNames = copiedNames
+                CopiedNames = copiedNames,
+                ActivityId = activityId,
+                DiagnosticsPath = diagnosticsPath
             };
+            if (progress != null || cancellationToken.CanBeCanceled)
+            {
+                request.ProgressProtocolVersion = 1;
+            }
+            journal.Write(
+                "parent",
+                "operation.start",
+                WpdDiagnosticJournal.Data(
+                    "operation", operation,
+                    "device", deviceName,
+                    "storage", storageName,
+                    "folder", requestedFolder ?? folderPath,
+                    "hasName", (backingName != null).ToString(CultureInfo.InvariantCulture),
+                    "contentBytes", contentBase64 == null
+                        ? null
+                        : ((contentBase64.Length / 4) * 3).ToString(CultureInfo.InvariantCulture)));
             string requestJson = Serialize(request);
             WpdSidecarProcessResult result;
+            var stopwatch = Stopwatch.StartNew();
             try
             {
-                result = processRunner.Run(sidecarPath, requestJson, timeout);
+                var streamingRunner = processRunner as IWpdSidecarStreamingProcessRunner;
+                result = streamingRunner == null
+                    ? RunLegacy(
+                        sidecarPath,
+                        requestJson,
+                        timeout,
+                        cancellationToken)
+                    : streamingRunner.Run(
+                        sidecarPath,
+                        requestJson,
+                        timeout,
+                        record =>
+                        {
+                            if (progress != null
+                                && record != null
+                                && record.Version == 1
+                                && string.Equals(
+                                    record.OperationId,
+                                    operationId,
+                                    StringComparison.Ordinal)
+                                && string.Equals(
+                                    record.Stage,
+                                    "snapshot-media-paths",
+                                    StringComparison.Ordinal))
+                            {
+                                progress.Report(new PhoneMediaTraversalProgress(
+                                    record.ObjectsScanned,
+                                    record.FoldersCompleted,
+                                    record.FoldersPending,
+                                    record.MediaFilesFound));
+                            }
+                        },
+                        cancellationToken);
             }
             catch (TimeoutException exception)
             {
+                stopwatch.Stop();
+                var data = WpdDiagnosticJournal.Data(
+                    "operation", operation,
+                    "elapsedMs", stopwatch.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture),
+                    "classification", "timeout-kill");
+                foreach (System.Collections.DictionaryEntry item in exception.Data)
+                {
+                    data["process." + item.Key] = Convert.ToString(
+                        item.Value,
+                        CultureInfo.InvariantCulture);
+                }
+                WpdDiagnosticJournal.AddException(data, exception);
+                journal.Write("parent", "process.timeout", data);
                 throw new IOException(
                     "WPD sidecar operation "
                         + operationId
@@ -218,10 +305,26 @@ namespace Shmembee.Windows
                 exception is InvalidOperationException
                 || exception is System.ComponentModel.Win32Exception)
             {
+                stopwatch.Stop();
+                var data = WpdDiagnosticJournal.Data(
+                    "operation", operation,
+                    "elapsedMs", stopwatch.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture));
+                WpdDiagnosticJournal.AddException(data, exception);
+                journal.Write("parent", "process.start-failure", data);
                 throw new IOException(
                     "WPD sidecar could not be started: " + sidecarPath,
                     exception);
             }
+            stopwatch.Stop();
+            journal.Write(
+                "parent",
+                "process.exit",
+                WpdDiagnosticJournal.Data(
+                    "operation", operation,
+                    "pid", result.ProcessId?.ToString(CultureInfo.InvariantCulture),
+                    "exitCode", result.ExitCode.ToString(CultureInfo.InvariantCulture),
+                    "elapsedMs", result.ElapsedMilliseconds?.ToString(
+                        CultureInfo.InvariantCulture)));
 
             WpdSidecarResponse response = null;
             if (!string.IsNullOrWhiteSpace(result.StandardOutput))
@@ -298,7 +401,23 @@ namespace Shmembee.Windows
                 throw new IOException(message + DiagnosticSuffix(response, result));
             }
 
+            journal.Write(
+                "parent",
+                "operation.complete",
+                WpdDiagnosticJournal.Data(
+                    "operation", operation,
+                    "stage", response.Stage));
             return response;
+        }
+
+        private WpdSidecarProcessResult RunLegacy(
+            string executablePath,
+            string standardInput,
+            TimeSpan operationTimeout,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return processRunner.Run(executablePath, standardInput, operationTimeout);
         }
 
         private static IOException ProtocolFailure(
@@ -450,15 +569,43 @@ namespace Shmembee.Windows
             TimeSpan timeout);
     }
 
-    public sealed class WpdSidecarProcessRunner : IWpdSidecarProcessRunner
+    public interface IWpdSidecarStreamingProcessRunner : IWpdSidecarProcessRunner
+    {
+        WpdSidecarProcessResult Run(
+            string executablePath,
+            string standardInput,
+            TimeSpan timeout,
+            Action<WpdSidecarProgressRecord> progress,
+            CancellationToken cancellationToken);
+    }
+
+    public sealed class WpdSidecarProcessRunner : IWpdSidecarStreamingProcessRunner
     {
         private const int MaximumOutputCharacters = 64 * 1024 * 1024;
+        private const string ProgressPrefix = "SHMEMBEE_PROGRESS\t";
 
         public WpdSidecarProcessResult Run(
             string executablePath,
             string standardInput,
             TimeSpan timeout)
         {
+            return Run(
+                executablePath,
+                standardInput,
+                timeout,
+                null,
+                CancellationToken.None);
+        }
+
+        public WpdSidecarProcessResult Run(
+            string executablePath,
+            string standardInput,
+            TimeSpan timeout,
+            Action<WpdSidecarProgressRecord> progress,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var elapsed = Stopwatch.StartNew();
             var startInfo = new ProcessStartInfo
             {
                 FileName = executablePath,
@@ -476,28 +623,50 @@ namespace Shmembee.Windows
                 process.Start();
                 process.StandardInput.Write(standardInput);
                 process.StandardInput.Close();
+#pragma warning disable CA2016 // net48 has no cancellation-aware StreamReader overload.
                 var outputTask = process.StandardOutput.ReadToEndAsync();
-                var errorTask = process.StandardError.ReadToEndAsync();
+#pragma warning restore CA2016
+                var errorTask = ReadErrorAsync(process.StandardError, progress);
                 int timeoutMilliseconds = timeout.TotalMilliseconds >= int.MaxValue
                     ? int.MaxValue
                     : (int)Math.Ceiling(timeout.TotalMilliseconds);
-                if (!process.WaitForExit(timeoutMilliseconds))
+                int waitSliceMilliseconds = 100;
+                int waitedMilliseconds = 0;
+                while (!process.WaitForExit(Math.Min(
+                    waitSliceMilliseconds,
+                    timeoutMilliseconds - waitedMilliseconds)))
                 {
-                    try
+                    waitedMilliseconds += Math.Min(
+                        waitSliceMilliseconds,
+                        timeoutMilliseconds - waitedMilliseconds);
+                    if (cancellationToken.IsCancellationRequested)
                     {
-                        process.Kill();
+                        KillAndWait(process);
+                        outputTask.GetAwaiter().GetResult();
+                        errorTask.GetAwaiter().GetResult();
+                        cancellationToken.ThrowIfCancellationRequested();
                     }
-                    catch (InvalidOperationException)
+                    if (waitedMilliseconds < timeoutMilliseconds)
                     {
-                        // The process exited between timeout detection and Kill.
+                        continue;
                     }
 
-                    process.WaitForExit();
-                    throw new TimeoutException();
+                    int processId = process.Id;
+                    var postKillElapsed = Stopwatch.StartNew();
+                    bool killSucceeded = KillAndWait(process);
+                    postKillElapsed.Stop();
+                    var timeoutException = new TimeoutException();
+                    timeoutException.Data["pid"] = processId;
+                    timeoutException.Data["killAttempted"] = true;
+                    timeoutException.Data["killSucceeded"] = killSucceeded;
+                    timeoutException.Data["postKillWaitMs"] =
+                        postKillElapsed.ElapsedMilliseconds;
+                    throw timeoutException;
                 }
 
                 string output = outputTask.GetAwaiter().GetResult();
                 string error = errorTask.GetAwaiter().GetResult();
+                elapsed.Stop();
                 if (output.Length > MaximumOutputCharacters
                     || error.Length > MaximumOutputCharacters)
                 {
@@ -508,7 +677,76 @@ namespace Shmembee.Windows
                 return new WpdSidecarProcessResult(
                     process.ExitCode,
                     output,
-                    error);
+                    error,
+                    process.Id,
+                    elapsed.ElapsedMilliseconds);
+            }
+        }
+
+        private static bool KillAndWait(Process process)
+        {
+            bool killed = false;
+            try
+            {
+                process.Kill();
+                killed = true;
+            }
+            catch (InvalidOperationException)
+            {
+                // The process exited between detection and Kill.
+            }
+            process.WaitForExit();
+            return killed;
+        }
+
+        private static async Task<string> ReadErrorAsync(
+            StreamReader reader,
+            Action<WpdSidecarProgressRecord> progress)
+        {
+            var error = new StringBuilder();
+            string line;
+            while ((line = await reader.ReadLineAsync().ConfigureAwait(false)) != null)
+            {
+                WpdSidecarProgressRecord record;
+                if (line.StartsWith(ProgressPrefix, StringComparison.Ordinal)
+                    && TryDeserializeProgress(
+                        line.Substring(ProgressPrefix.Length),
+                        out record))
+                {
+                    progress?.Invoke(record);
+                    continue;
+                }
+
+                if (error.Length + line.Length + Environment.NewLine.Length
+                    > MaximumOutputCharacters)
+                {
+                    throw new IOException(
+                        "The WPD sidecar exceeded the output size limit.");
+                }
+                error.AppendLine(line);
+            }
+            return error.ToString();
+        }
+
+        private static bool TryDeserializeProgress(
+            string json,
+            out WpdSidecarProgressRecord record)
+        {
+            try
+            {
+                using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(json)))
+                {
+                    record = (WpdSidecarProgressRecord)new DataContractJsonSerializer(
+                        typeof(WpdSidecarProgressRecord)).ReadObject(stream);
+                    return record != null;
+                }
+            }
+            catch (Exception exception) when (
+                exception is SerializationException
+                || exception is InvalidOperationException)
+            {
+                record = null;
+                return false;
             }
         }
     }
@@ -518,11 +756,15 @@ namespace Shmembee.Windows
         public WpdSidecarProcessResult(
             int exitCode,
             string standardOutput,
-            string standardError)
+            string standardError,
+            int? processId = null,
+            long? elapsedMilliseconds = null)
         {
             ExitCode = exitCode;
             StandardOutput = standardOutput ?? string.Empty;
             StandardError = standardError ?? string.Empty;
+            ProcessId = processId;
+            ElapsedMilliseconds = elapsedMilliseconds;
         }
 
         public int ExitCode { get; }
@@ -530,6 +772,8 @@ namespace Shmembee.Windows
         public string StandardOutput { get; }
 
         public string StandardError { get; }
+        public int? ProcessId { get; }
+        public long? ElapsedMilliseconds { get; }
     }
 
     public sealed class WpdSidecarRequest
@@ -544,6 +788,21 @@ namespace Shmembee.Windows
         public string ContentBase64 { get; set; }
         public string BackupFolderName { get; set; }
         public string[] CopiedNames { get; set; }
+        public string ActivityId { get; set; }
+        public string DiagnosticsPath { get; set; }
+        public int? ProgressProtocolVersion { get; set; }
+    }
+
+    public sealed class WpdSidecarProgressRecord
+    {
+        public int Version { get; set; }
+        public string OperationId { get; set; }
+        public string Stage { get; set; }
+        public int ObjectsScanned { get; set; }
+        public int FoldersCompleted { get; set; }
+        public int FoldersPending { get; set; }
+        public int MediaFilesFound { get; set; }
+        public long ElapsedMilliseconds { get; set; }
     }
 
     public sealed class WpdSidecarResponse

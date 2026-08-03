@@ -13,7 +13,12 @@ param(
 
     [switch]$SkipBuild,
 
-    [switch]$BackupProbe
+    [switch]$BackupProbe,
+
+    [ValidateRange(0, 10000)]
+    [int]$ReadOnlySoakCount = 0,
+
+    [string]$DiagnosticsPath = (Join-Path $env:LOCALAPPDATA "Shmembee\diagnostics")
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,6 +66,8 @@ function Invoke-WpdSidecar {
         ContentBase64 = $ContentBase64
         BackupFolderName = $BackupFolderName
         CopiedNames = $CopiedNames
+        ActivityId = $script:activityId
+        DiagnosticsPath = (Join-Path $DiagnosticsPath "wpd-diagnostics.jsonl")
     } | ConvertTo-Json -Compress
     $responseJson = $request | & $sidecarPath
     $exitCode = $LASTEXITCODE
@@ -77,6 +84,20 @@ function Invoke-WpdSidecar {
     }
 
     return $response
+}
+
+$script:activityId = [Guid]::NewGuid().ToString("N")
+if ($ReadOnlySoakCount -gt 0) {
+    1..$ReadOnlySoakCount | ForEach-Object {
+        $null = Invoke-WpdSidecar -Operation "probe" -ObjectName $Name
+        $null = Invoke-WpdSidecar -Operation "read" -ObjectName $Name
+        Write-Progress -Activity "Read-only WPD soak" `
+            -Status "$_ / $ReadOnlySoakCount" `
+            -PercentComplete (($_ / $ReadOnlySoakCount) * 100)
+    }
+    Write-Progress -Activity "Read-only WPD soak" -Completed
+    Write-Host "Read-only soak passed ($ReadOnlySoakCount iterations). Diagnostics: $DiagnosticsPath"
+    return
 }
 
 $response = Invoke-WpdSidecar -Operation "probe" -ObjectName $Name

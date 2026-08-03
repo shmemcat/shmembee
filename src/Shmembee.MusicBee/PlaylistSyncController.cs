@@ -114,6 +114,18 @@ namespace MusicBeePlugin
         public string Status { get; }
     }
 
+    internal sealed class InlineProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> report;
+
+        public InlineProgress(Action<T> report)
+        {
+            this.report = report ?? throw new ArgumentNullException(nameof(report));
+        }
+
+        public void Report(T value) => report(value);
+    }
+
     internal sealed class PlaylistSyncController
     {
         public const string PlaylistName = "Shmembee Phase 3 Test";
@@ -165,7 +177,10 @@ namespace MusicBeePlugin
                 settings.StorageName,
                 settings.PlaylistFolder,
                 TimeSpan.FromSeconds(settings.TimeoutSeconds),
-                mediaFolderPath: settings.PhoneMediaFolder);
+                mediaFolderPath: settings.PhoneMediaFolder,
+                diagnosticsPath: System.IO.Path.Combine(
+                    storagePath,
+                    "diagnostics"));
             phoneCatalogReader = transport;
             phoneSnapshotReader = transport;
             phoneMediaPathReader = transport;
@@ -1055,7 +1070,9 @@ namespace MusicBeePlugin
 
         private IReadOnlyDictionary<string, string> ResolvePhoneMediaPaths(
             TrackResolverIndex resolver,
-            IEnumerable<string>? preferredUrls = null)
+            IEnumerable<string>? preferredUrls = null,
+            CancellationToken cancellationToken = default,
+            IProgress<PhoneMediaTraversalProgress>? progress = null)
         {
             if (phoneMediaPathReader == null)
             {
@@ -1066,8 +1083,13 @@ namespace MusicBeePlugin
                 TrackResolverIndex.CreatePreferredUrlKeys(preferredUrls);
             var matches = new Dictionary<string, HashSet<string>>(
                 StringComparer.OrdinalIgnoreCase);
-            foreach (string path in phoneMediaPathReader.ReadMediaPaths())
+            IReadOnlyList<string> mediaPaths =
+                phoneMediaPathReader is IProgressivePhoneMediaPathReader progressive
+                    ? progressive.ReadMediaPaths(cancellationToken, progress)
+                    : phoneMediaPathReader.ReadMediaPaths();
+            foreach (string path in mediaPaths)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ResolutionResult result = resolver.Resolve(
                     CreatePhoneReference(path, settings.PhoneMediaFolder),
                     approvedMappings: null,
@@ -1125,8 +1147,10 @@ namespace MusicBeePlugin
         }
 
         public IReadOnlyList<HarnessPlaylistRow> RefreshPlaylistRows(
-            IProgress<HarnessOperationProgress>? progress = null)
+            IProgress<HarnessOperationProgress>? progress = null,
+            CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(progress, 0, "Starting");
             IReadOnlyList<MusicPlaylist> playlists = InvokeOnMusicBeeThread(
                 () => libraryReader.ReadPlaylists());
@@ -1138,10 +1162,26 @@ namespace MusicBeePlugin
                 library.Select(track => track.Url),
                 StringComparer.OrdinalIgnoreCase);
             TrackResolverIndex resolverIndex = new TrackResolver().CreateIndex(library);
+            var traversalProgress = new InlineProgress<PhoneMediaTraversalProgress>(update =>
+                ReportProgress(
+                    progress,
+                    25,
+                    "Scanning phone media — "
+                        + update.ObjectsScanned.ToString("N0")
+                        + " objects, "
+                        + update.FoldersCompleted.ToString("N0")
+                        + " folders scanned, "
+                        + update.FoldersPending.ToString("N0")
+                        + " pending, "
+                        + update.MediaFilesFound.ToString("N0")
+                        + " files found"));
             IReadOnlyDictionary<string, string> mediaPaths =
                 ResolvePhoneMediaPaths(
                     resolverIndex,
-                    playlists.SelectMany(item => item.TrackUrls));
+                    playlists.SelectMany(item => item.TrackUrls),
+                    cancellationToken,
+                    traversalProgress);
+            cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(progress, 45, "Phone media paths resolved");
             IReadOnlyList<PhonePlaylistContent>? phoneSnapshot =
                 phoneSnapshotReader?.ReadPlaylistSnapshot();
@@ -2317,15 +2357,15 @@ namespace MusicBeePlugin
                 ? phonePath
                 : segments[segments.Length - 1];
             PhoneFileNameMetadata fileMetadata =
-                PhoneFileNameParser.Parse(fileName);
+                PhoneFileNameParser.Parse(fileName, artist);
 
             return new TrackReference(
                 phonePath,
+                artist: artist,
                 title: string.IsNullOrWhiteSpace(title)
                     ? fileMetadata.Title
                     : title,
                 durationSeconds: durationSeconds,
-                albumArtist: artist,
                 album: album,
                 discNumber: fileMetadata.DiscNumber,
                 trackNumber: fileMetadata.TrackNumber);

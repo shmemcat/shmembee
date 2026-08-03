@@ -107,7 +107,7 @@ namespace MusicBeePlugin
             Text = "Shmembee";
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(960, 640);
-            Size = new Size(1180, 760);
+            Size = new Size(1440, 1000);
             FormBorderStyle = FormBorderStyle.Sizable;
             BuildModernLayout();
             controller.AttachUiDispatcher(this);
@@ -1039,7 +1039,10 @@ namespace MusicBeePlugin
                         settings.StorageName,
                         settings.PlaylistFolder,
                         TimeSpan.FromSeconds(settings.TimeoutSeconds),
-                        mediaFolderPath: settings.PhoneMediaFolder);
+                        mediaFolderPath: settings.PhoneMediaFolder,
+                        diagnosticsPath: System.IO.Path.Combine(
+                            storagePath,
+                            "diagnostics"));
                     return new SetupDiagnosticService(
                         storagePath,
                         string.IsNullOrWhiteSpace(settings.DatabasePath)
@@ -1181,7 +1184,7 @@ namespace MusicBeePlugin
                 token => Task.Run(() =>
                 {
                     token.ThrowIfCancellationRequested();
-                    return controller.RefreshPlaylistRows(progress);
+                    return controller.RefreshPlaylistRows(progress, token);
                 }, token),
                 result =>
                 {
@@ -1831,6 +1834,7 @@ namespace MusicBeePlugin
             operation?.Dispose();
             operation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             CancellationToken token = operation.Token;
+            bool wasCancelled = false;
             SetBusy(true, activity);
             try
             {
@@ -1842,6 +1846,7 @@ namespace MusicBeePlugin
             }
             catch (OperationCanceledException)
             {
+                wasCancelled = true;
                 activityLabel.Text = "Operation cancelled";
             }
             catch (Exception exception)
@@ -1860,7 +1865,7 @@ namespace MusicBeePlugin
             {
                 if (!IsDisposed)
                 {
-                    SetBusy(false, "Ready");
+                    SetBusy(false, wasCancelled ? "Operation cancelled" : "Ready");
                     SetActionState();
                 }
             }

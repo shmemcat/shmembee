@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 
 namespace Shmembee.Application.Ports
 {
@@ -25,6 +26,33 @@ namespace Shmembee.Application.Ports
     public interface IPhoneMediaPathReader
     {
         IReadOnlyList<string> ReadMediaPaths();
+    }
+
+    public interface IProgressivePhoneMediaPathReader : IPhoneMediaPathReader
+    {
+        IReadOnlyList<string> ReadMediaPaths(
+            CancellationToken cancellationToken,
+            IProgress<PhoneMediaTraversalProgress>? progress = null);
+    }
+
+    public sealed class PhoneMediaTraversalProgress
+    {
+        public PhoneMediaTraversalProgress(
+            int objectsScanned,
+            int foldersCompleted,
+            int foldersPending,
+            int mediaFilesFound)
+        {
+            ObjectsScanned = objectsScanned;
+            FoldersCompleted = foldersCompleted;
+            FoldersPending = foldersPending;
+            MediaFilesFound = mediaFilesFound;
+        }
+
+        public int ObjectsScanned { get; }
+        public int FoldersCompleted { get; }
+        public int FoldersPending { get; }
+        public int MediaFilesFound { get; }
     }
 
     public interface IPhonePlaylistBackupTransport

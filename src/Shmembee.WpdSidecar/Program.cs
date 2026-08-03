@@ -9,28 +9,88 @@ namespace Shmembee.WpdSidecar
 {
     internal static class Program
     {
+        private const string ProgressPrefix = "SHMEMBEE_PROGRESS\t";
+
         private static int Main()
         {
             OperationResponse response;
+            OperationRequest request = null;
+            WpdDiagnosticJournal journal = null;
             try
             {
                 string input = Console.In.ReadToEnd();
-                OperationRequest request = Deserialize<OperationRequest>(input)
+                request = Deserialize<OperationRequest>(input)
                     ?? throw new InvalidOperationException("The JSON request is empty.");
-                response = new WpdOperations().Execute(request);
+                if (!string.IsNullOrWhiteSpace(request.DiagnosticsPath))
+                {
+                    journal = new WpdDiagnosticJournal(
+                        request.DiagnosticsPath,
+                        request.ActivityId,
+                        request.OperationId);
+                    journal.Write(
+                        "sidecar.start",
+                        WpdDiagnosticJournal.Data(
+                            "operation", request.Operation,
+                            "runtime", Environment.Version.ToString()));
+                }
+                Action<WpdOperations.MediaTraversalProgress> progress = null;
+                if (request.ProgressProtocolVersion == 1)
+                {
+                    progress = value => WriteProgress(request.OperationId, value);
+                }
+                response = new WpdOperations(journal, progress).Execute(request);
             }
             catch (Exception exception)
             {
-                var com = exception as COMException;
+                var data = WpdDiagnosticJournal.Data("stage", "request");
+                WpdDiagnosticJournal.AddException(data, exception);
+                journal?.Write("operation.failure", data);
                 response = OperationResponse.Failure(
-                    null,
+                    request?.OperationId,
                     "request",
                     exception.Message,
-                    com?.ErrorCode);
+                    DeepestComHResult(exception));
             }
 
+            journal?.Write(
+                "sidecar.exit",
+                WpdDiagnosticJournal.Data(
+                    "success", response.Success.ToString(),
+                    "stage", response.Stage));
             Console.Out.Write(Serialize(response));
             return response.Success ? 0 : 1;
+        }
+
+        private static void WriteProgress(
+            string operationId,
+            WpdOperations.MediaTraversalProgress value)
+        {
+            var record = new MediaProgressRecord
+            {
+                Version = 1,
+                OperationId = operationId,
+                Stage = "snapshot-media-paths",
+                ObjectsScanned = value.ObjectsScanned,
+                FoldersCompleted = value.FoldersCompleted,
+                FoldersPending = value.FoldersPending,
+                MediaFilesFound = value.MediaFilesFound,
+                ElapsedMilliseconds = value.ElapsedMilliseconds
+            };
+            Console.Error.WriteLine(ProgressPrefix + Serialize(record));
+            Console.Error.Flush();
+        }
+
+        private static int? DeepestComHResult(Exception exception)
+        {
+            int? result = null;
+            for (Exception current = exception; current != null; current = current.InnerException)
+            {
+                if (current is COMException)
+                {
+                    result = current.HResult;
+                }
+            }
+            return result;
         }
 
         private static string Serialize<T>(T value)
@@ -70,6 +130,21 @@ namespace Shmembee.WpdSidecar
         public string ContentBase64 { get; set; }
         public string BackupFolderName { get; set; }
         public string[] CopiedNames { get; set; }
+        public string ActivityId { get; set; }
+        public string DiagnosticsPath { get; set; }
+        public int? ProgressProtocolVersion { get; set; }
+    }
+
+    public sealed class MediaProgressRecord
+    {
+        public int Version { get; set; }
+        public string OperationId { get; set; }
+        public string Stage { get; set; }
+        public int ObjectsScanned { get; set; }
+        public int FoldersCompleted { get; set; }
+        public int FoldersPending { get; set; }
+        public int MediaFilesFound { get; set; }
+        public long ElapsedMilliseconds { get; set; }
     }
 
     public sealed class OperationResponse

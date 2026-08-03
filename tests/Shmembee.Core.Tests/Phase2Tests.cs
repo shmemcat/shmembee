@@ -59,6 +59,24 @@ public sealed class Phase2Tests
         Assert.Equal(expectedTrack, parsed.TrackNumber);
     }
 
+    [Theory]
+    [InlineData("02 - EVERGLOW - DUN DUN.mp3", "EVERGLOW", "DUN DUN", 2)]
+    [InlineData("Chris Isaak - Wicked Game.mp3", "Chris Isaak", "Wicked Game", null)]
+    public void PhoneFileNameParserSupportsArtistBasedPhoneTemplate(
+        string fileName,
+        string artist,
+        string expectedTitle,
+        int? expectedTrack)
+    {
+        PhoneFileNameMetadata parsed = PhoneFileNameParser.Parse(
+            fileName,
+            artist);
+
+        Assert.Equal(expectedTitle, parsed.Title);
+        Assert.Null(parsed.DiscNumber);
+        Assert.Equal(expectedTrack, parsed.TrackNumber);
+    }
+
     [Fact]
     public void ResolverUsesApprovedMappingBeforeAmbiguousFilename()
     {

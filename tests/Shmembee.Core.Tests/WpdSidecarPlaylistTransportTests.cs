@@ -28,6 +28,62 @@ public sealed class WpdSidecarPlaylistTransportTests
     }
 
     [Fact]
+    public void RequestCarriesCorrelatedDiagnosticsWithoutContentInJournal()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            "shmembee-wpd-tests-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string? activityId = null;
+            var runner = new RecordingRunner(request =>
+            {
+                using JsonDocument document = JsonDocument.Parse(request);
+                JsonElement root = document.RootElement;
+                activityId = root.GetProperty("ActivityId").GetString();
+                Assert.False(string.IsNullOrWhiteSpace(activityId));
+                Assert.Equal(
+                    Path.Combine(directory, "wpd-diagnostics.jsonl"),
+                    root.GetProperty("DiagnosticsPath").GetString());
+                return Success(root.GetProperty("OperationId").GetString()!);
+            });
+            var transport = new WpdSidecarPlaylistTransport(
+                "sidecar.exe",
+                "MLE S24U",
+                "Internal storage",
+                "gmmp/playlists",
+                TimeSpan.FromSeconds(1),
+                runner,
+                diagnosticsPath: directory);
+
+            transport.Replace("playlist.m3u", new byte[] { 1, 2, 3 });
+
+            string journal = File.ReadAllText(
+                Path.Combine(directory, "wpd-diagnostics.jsonl"));
+            Assert.Contains(activityId!, journal);
+            Assert.Contains("\"operation.start\"", journal);
+            Assert.DoesNotContain("AQID", journal);
+            Assert.DoesNotContain("playlist.m3u", journal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void ProcessResultRetainsOptionalExecutionDiagnostics()
+    {
+        var result = new WpdSidecarProcessResult(7, "out", "err", 123, 456);
+
+        Assert.Equal(123, result.ProcessId);
+        Assert.Equal(456, result.ElapsedMilliseconds);
+    }
+
+    [Fact]
     public void ReplaceSerializesContent()
     {
         var runner = new RecordingRunner(request =>
@@ -498,6 +554,72 @@ public sealed class WpdSidecarPlaylistTransportTests
         Assert.Equal(path, actual);
     }
 
+    [Fact]
+    public void MediaPathSnapshotReportsMatchingStreamingProgress()
+    {
+        var runner = new StreamingRunner((request, report) =>
+        {
+            using JsonDocument document = JsonDocument.Parse(request);
+            JsonElement root = document.RootElement;
+            Assert.Equal(1, root.GetProperty("ProgressProtocolVersion").GetInt32());
+            string operationId = root.GetProperty("OperationId").GetString()!;
+            report(new WpdSidecarProgressRecord
+            {
+                Version = 1,
+                OperationId = "other",
+                Stage = "snapshot-media-paths",
+                ObjectsScanned = 1
+            });
+            report(new WpdSidecarProgressRecord
+            {
+                Version = 1,
+                OperationId = operationId,
+                Stage = "snapshot-media-paths",
+                ObjectsScanned = 120,
+                FoldersCompleted = 7,
+                FoldersPending = 3,
+                MediaFilesFound = 90
+            });
+            return new WpdSidecarProcessResult(
+                0,
+                JsonSerializer.Serialize(new
+                {
+                    Success = true,
+                    OperationId = operationId,
+                    MediaPaths = new[] { "Music/Track.mp3" }
+                }),
+                string.Empty);
+        });
+        var updates = new List<Shmembee.Application.Ports.PhoneMediaTraversalProgress>();
+        var progress = new InlineProgress<
+            Shmembee.Application.Ports.PhoneMediaTraversalProgress>(updates.Add);
+
+        IReadOnlyList<string> result = CreateTransport(
+            runner,
+            "Music").ReadMediaPaths(CancellationToken.None, progress);
+
+        Assert.Single(result);
+        var update = Assert.Single(updates);
+        Assert.Equal(120, update.ObjectsScanned);
+        Assert.Equal(7, update.FoldersCompleted);
+        Assert.Equal(3, update.FoldersPending);
+        Assert.Equal(90, update.MediaFilesFound);
+    }
+
+    [Fact]
+    public void MediaPathSnapshotHonorsPreCancelledToken()
+    {
+        var runner = new StreamingRunner((_, _) =>
+            throw new InvalidOperationException("Runner should not start."));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => CreateTransport(
+            runner,
+            "Music").ReadMediaPaths(cancellation.Token));
+        Assert.Equal(0, runner.CallCount);
+    }
+
     [Theory]
     [InlineData("../playlist.m3u")]
     [InlineData("folder/playlist.m3u")]
@@ -566,5 +688,42 @@ public sealed class WpdSidecarPlaylistTransportTests
             CallCount++;
             throw exception;
         }
+    }
+
+    private sealed class StreamingRunner(
+        Func<string, Action<WpdSidecarProgressRecord>, WpdSidecarProcessResult> handler)
+        : IWpdSidecarStreamingProcessRunner
+    {
+        public int CallCount { get; private set; }
+
+        public WpdSidecarProcessResult Run(
+            string executablePath,
+            string standardInput,
+            TimeSpan timeout)
+        {
+            return Run(
+                executablePath,
+                standardInput,
+                timeout,
+                null!,
+                CancellationToken.None);
+        }
+
+        public WpdSidecarProcessResult Run(
+            string executablePath,
+            string standardInput,
+            TimeSpan timeout,
+            Action<WpdSidecarProgressRecord> progress,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CallCount++;
+            return handler(standardInput, progress);
+        }
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
     }
 }

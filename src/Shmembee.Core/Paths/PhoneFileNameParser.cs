@@ -10,7 +10,9 @@ namespace Shmembee.Core.Paths
             @"^(?:(?<disc>\d+)-(?<track>\d+)|(?<track>\d+))(?:(?:\s+-\s+)|\s+)(?<title>.+)$",
             RegexOptions.CultureInvariant);
 
-        public static PhoneFileNameMetadata Parse(string fileName)
+        public static PhoneFileNameMetadata Parse(
+            string fileName,
+            string? artist = null)
         {
             if (fileName == null)
             {
@@ -42,6 +44,15 @@ namespace Shmembee.Core.Paths
                     @"^\s*#\s*-\s*",
                     string.Empty,
                     RegexOptions.CultureInvariant);
+            }
+
+            string artistPrefix = (artist ?? string.Empty).Trim();
+            if (artistPrefix.Length > 0
+                && title.StartsWith(
+                    artistPrefix + " - ",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                title = title.Substring(artistPrefix.Length + 3);
             }
 
             return new PhoneFileNameMetadata(title, discNumber, trackNumber);
