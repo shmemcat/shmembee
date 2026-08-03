@@ -114,6 +114,45 @@ public sealed class Phase4BackendTests : IDisposable
     }
 
     [Fact]
+    public void MusicBeeBackupWritesPlaylistsIntoDateAndTimeDirectories()
+    {
+        DateTimeOffset timestamp = new(2026, 8, 3, 11, 30, 45, TimeSpan.FromHours(-7));
+        string root = Path.Combine(temporaryDirectory, "post-sync");
+        var backup = new MusicBeePlaylistBackup(
+            () =>
+            [
+                new MusicPlaylist(
+                    "playlist-1",
+                    "Road: Mix",
+                    [@"D:\Music\Artist\First.mp3", @"D:\Music\Artist\Second.mp3"]),
+                new MusicPlaylist(
+                    "playlist-2",
+                    "Road: Mix",
+                    [@"E:\Audio\Third.flac"])
+            ],
+            root,
+            () => timestamp);
+
+        string first = backup.Create();
+        string second = backup.Create();
+
+        string dateDirectory = Path.Combine(root, "MusicBee Playlists", "2026-08-03");
+        Assert.Equal(Path.Combine(dateDirectory, "11-30-45"), first);
+        Assert.Equal(Path.Combine(dateDirectory, "11-30-45-02"), second);
+        string[] files = Directory.GetFiles(first)
+            .Select(Path.GetFileName)
+            .OrderBy(name => name)
+            .ToArray()!;
+        Assert.Equal(["Road_ Mix-02.m3u", "Road_ Mix.m3u"], files);
+        Assert.Equal(
+            "D:\\Music\\Artist\\First.mp3\nD:\\Music\\Artist\\Second.mp3\n",
+            File.ReadAllText(Path.Combine(first, "Road_ Mix.m3u")));
+        Assert.Equal(
+            "E:\\Audio\\Third.flac\n",
+            File.ReadAllText(Path.Combine(first, "Road_ Mix-02.m3u")));
+    }
+
+    [Fact]
     public void MobileExportSessionWritesPlaylistsAndLogIntoTimestampedDirectory()
     {
         DateTimeOffset timestamp = new(2026, 8, 3, 1, 47, 0, TimeSpan.FromHours(-7));

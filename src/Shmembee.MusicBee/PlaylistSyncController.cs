@@ -147,6 +147,7 @@ namespace MusicBeePlugin
         private readonly IPhoneMediaPathReader? phoneMediaPathReader;
         private readonly IPhonePlaylistBackupTransport phoneBackupTransport;
         private readonly PostSyncPlaylistBackup? postSyncBackup;
+        private readonly MusicBeePlaylistBackup? musicBeePlaylistBackup;
         private readonly AcceptedBaselineStore baselineStore;
         private readonly SynchronizationHistoryStore history;
         private readonly string playlistId;
@@ -194,6 +195,11 @@ namespace MusicBeePlugin
                 ? null
                 : new PostSyncPlaylistBackup(
                     transport,
+                    settings.PostSyncBackupPath);
+            musicBeePlaylistBackup = string.IsNullOrWhiteSpace(settings.PostSyncBackupPath)
+                ? null
+                : new MusicBeePlaylistBackup(
+                    () => InvokeOnMusicBeeThread(() => libraryReader.ReadPlaylists()),
                     settings.PostSyncBackupPath);
             phoneWriter = new TransportPhonePlaylistWriter(
                 transport,
@@ -537,7 +543,7 @@ namespace MusicBeePlugin
             string postSyncDetails = string.Empty;
             if (completeSuccess)
             {
-                completeSuccess = TryCreatePostSyncBackup(
+                completeSuccess = TryCreateCompletedPlaylistBackups(
                     out postSyncDetails,
                     out string postSyncError);
                 if (!completeSuccess)
@@ -711,7 +717,9 @@ namespace MusicBeePlugin
             }
 
             string postSyncDetails;
-            if (!TryCreatePostSyncBackup(out postSyncDetails, out string postSyncError))
+            if (!TryCreateCompletedPlaylistBackups(
+                out postSyncDetails,
+                out string postSyncError))
             {
                 return SynchronizationApplyResult.Failed(
                     result.Details + " " + postSyncError
@@ -789,7 +797,9 @@ namespace MusicBeePlugin
             }
 
             string postSyncDetails;
-            if (!TryCreatePostSyncBackup(out postSyncDetails, out string postSyncError))
+            if (!TryCreateCompletedPlaylistBackups(
+                out postSyncDetails,
+                out string postSyncError))
             {
                 return SynchronizationLifecycleResult.Failed(
                     result.Details + " " + postSyncError
@@ -816,25 +826,29 @@ namespace MusicBeePlugin
             }
         }
 
-        private bool TryCreatePostSyncBackup(
+        private bool TryCreateCompletedPlaylistBackups(
             out string details,
             out string error)
         {
             details = string.Empty;
             error = string.Empty;
-            if (postSyncBackup == null)
-            {
-                return true;
-            }
-
             try
             {
-                details = " Post-sync M3U backup: " + postSyncBackup.Create() + ".";
+                if (postSyncBackup != null)
+                {
+                    details = " Post-sync phone M3U backup: "
+                        + postSyncBackup.Create() + ".";
+                }
+                if (musicBeePlaylistBackup != null)
+                {
+                    details += " MusicBee playlist backup: "
+                        + musicBeePlaylistBackup.Create() + ".";
+                }
                 return true;
             }
             catch (Exception exception)
             {
-                error = "The configured post-sync M3U backup failed: "
+                error = "The configured completed-playlist backup failed: "
                     + exception.Message + ".";
                 return false;
             }
@@ -1028,6 +1042,8 @@ namespace MusicBeePlugin
                 TrackResolverIndex.CreatePreferredUrlKeys(preferredUrls);
             IReadOnlyDictionary<string, string>? approvedMappings =
                 knownMappings.Count == 0 ? null : knownMappings;
+            var baselineTombstones = new BaselineTombstoneMatcher(
+                baseline?.Tracks ?? Array.Empty<SynchronizationTrack>());
             var resolved = new List<ResolvedHarnessTrack>();
             for (int index = 0; index < phoneState.Entries.Count; index++)
             {
@@ -1110,16 +1126,30 @@ namespace MusicBeePlugin
                         + (sourceFileExists
                             ? " Its existing path was found in the live phone-media scan."
                             : " Exclude it to remove this stale playlist entry.");
-                    resolved.Add(sourceFileExists
-                        ? new ResolvedHarnessTrack(
+                    if (sourceFileExists)
+                    {
+                        resolved.Add(new ResolvedHarnessTrack(
                             path,
                             path,
                             path,
                             isResolved: false,
                             unavailableReason: reason,
                             sourcePhonePath: path,
-                            phonePathIsCurrent: true)
-                        : ResolvedHarnessTrack.UnresolvedPhone(path, reason));
+                            phonePathIsCurrent: true));
+                    }
+                    else if (baselineTombstones.TryConsume(
+                        path,
+                        out SynchronizationTrack? baselineTrack))
+                    {
+                        resolved.Add(ResolvedHarnessTrack.BaselineTombstone(
+                            baselineTrack!,
+                            path,
+                            reason));
+                    }
+                    else
+                    {
+                        resolved.Add(ResolvedHarnessTrack.UnresolvedPhone(path, reason));
+                    }
                     continue;
                 }
 
@@ -1923,23 +1953,24 @@ namespace MusicBeePlugin
                 && processedCount == drafts.Count;
             if (completeSuccess
                 && succeeded.Count > 0
-                && postSyncBackup != null)
+                && (postSyncBackup != null || musicBeePlaylistBackup != null))
             {
-                try
+                if (TryCreateCompletedPlaylistBackups(
+                    out string backupDetails,
+                    out string backupError))
                 {
-                    string backupPath = postSyncBackup.Create();
                     summary += Environment.NewLine
-                        + "Post-sync M3U backup: " + backupPath;
+                        + backupDetails.TrimStart();
                 }
-                catch (Exception exception)
+                else
                 {
                     completeSuccess = false;
                     errors.Add("• Post-sync backup: "
-                        + DescribeApplyFailure(exception.Message));
+                        + DescribeApplyFailure(backupError));
                     summary += Environment.NewLine + Environment.NewLine
                         + "The playlist changes succeeded, but the safety backup "
                         + "could not be created:" + Environment.NewLine
-                        + "• " + DescribeApplyFailure(exception.Message);
+                        + "• " + DescribeApplyFailure(backupError);
                 }
             }
 
@@ -2963,6 +2994,19 @@ namespace MusicBeePlugin
             new ResolvedHarnessTrack(
                 "unresolved-phone:" + TrackPathNormalizer.NormalizePhonePath(phonePath),
                 phonePath,
+                phonePath,
+                isResolved: false,
+                unavailableReason: reason,
+                sourcePhonePath: phonePath,
+                phonePathIsCurrent: false);
+
+        public static ResolvedHarnessTrack BaselineTombstone(
+            SynchronizationTrack baselineTrack,
+            string phonePath,
+            string reason) =>
+            new ResolvedHarnessTrack(
+                baselineTrack.TrackId,
+                baselineTrack.MusicBeeUrl,
                 phonePath,
                 isResolved: false,
                 unavailableReason: reason,
