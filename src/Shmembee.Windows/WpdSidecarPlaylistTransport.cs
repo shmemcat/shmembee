@@ -21,6 +21,7 @@ namespace Shmembee.Windows
         IProgressivePhoneMediaPathReader,
         IPhonePlaylistBackupTransport
     {
+        private static readonly TimeSpan MediaScanTimeout = TimeSpan.FromHours(2);
         private readonly string sidecarPath;
         private readonly string deviceName;
         private readonly string storageName;
@@ -241,6 +242,13 @@ namespace Shmembee.Windows
                         : ((contentBase64.Length / 4) * 3).ToString(CultureInfo.InvariantCulture)));
             string requestJson = Serialize(request);
             WpdSidecarProcessResult result;
+            TimeSpan operationTimeout = string.Equals(
+                operation,
+                "snapshot-media-paths",
+                StringComparison.Ordinal)
+                && timeout < MediaScanTimeout
+                ? MediaScanTimeout
+                : timeout;
             var stopwatch = Stopwatch.StartNew();
             try
             {
@@ -249,12 +257,12 @@ namespace Shmembee.Windows
                     ? RunLegacy(
                         sidecarPath,
                         requestJson,
-                        timeout,
+                        operationTimeout,
                         cancellationToken)
                     : streamingRunner.Run(
                         sidecarPath,
                         requestJson,
-                        timeout,
+                        operationTimeout,
                         record =>
                         {
                             if (progress != null
@@ -297,7 +305,7 @@ namespace Shmembee.Windows
                     "WPD sidecar operation "
                         + operationId
                         + " timed out after "
-                        + timeout
+                        + operationTimeout
                         + ".",
                     exception);
             }

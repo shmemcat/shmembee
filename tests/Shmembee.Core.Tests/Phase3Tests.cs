@@ -28,6 +28,24 @@ public sealed class Phase3Tests : IDisposable
     }
 
     [Fact]
+    public void DeterministicWriterCanAddAndroidStorageRoot()
+    {
+        var writer = new DeterministicM3uWriter(
+            pathPrefix: "/storage/emulated/0/");
+
+        string content = Encoding.UTF8.GetString(writer.Write(new[]
+        {
+            @"Music\Remi Wolf\Liz\01 - Remi Wolf - Liz.mp3",
+            "/storage/emulated/0/Music/Already Absolute.mp3"
+        }));
+
+        Assert.Equal(
+            "/storage/emulated/0/Music/Remi Wolf/Liz/01 - Remi Wolf - Liz.mp3\n"
+                + "/storage/emulated/0/Music/Already Absolute.mp3\n",
+            content);
+    }
+
+    [Fact]
     public void CoordinatorRejectsStaleInputsWithoutWriting()
     {
         var musicBee = new MemoryMusicBee("old");
@@ -66,6 +84,31 @@ public sealed class Phase3Tests : IDisposable
         Assert.Equal(new[] { "Music/New.mp3" }, phone.State.Entries);
         Assert.Equal(1, history.CompletedCount);
         Assert.Equal(0, history.FailedCount);
+    }
+
+    [Fact]
+    public void CoordinatorReadsPhoneButWritesGeneratedOutput()
+    {
+        var musicBee = new MemoryMusicBee("old");
+        var phone = new MemoryPhone("old-phone");
+        var generatedOutput = new MemoryPhone();
+        var history = new MemoryHistory();
+        SynchronizationPlan plan = Plan(
+            musicBee.State.Checksum,
+            phone.State.Checksum);
+
+        SynchronizationApplyResult result = new SynchronizationCoordinator(
+            musicBee,
+            phone,
+            generatedOutput,
+            history).Apply(plan, CancellationToken.None);
+
+        Assert.Equal(SynchronizationApplyStatus.Succeeded, result.Status);
+        Assert.Equal(new[] { "old-phone" }, phone.State.Entries);
+        Assert.Equal(0, phone.ReplaceCount);
+        Assert.Equal(new[] { "Music/New.mp3" }, generatedOutput.State.Entries);
+        Assert.Equal(1, generatedOutput.ReplaceCount);
+        Assert.Equal(1, history.CompletedCount);
     }
 
     [Fact]

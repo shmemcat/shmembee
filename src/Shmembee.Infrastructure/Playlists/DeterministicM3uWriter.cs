@@ -11,10 +11,16 @@ namespace Shmembee.Infrastructure.Playlists
         private static readonly UTF8Encoding Utf8WithoutBom = new UTF8Encoding(false);
         private static readonly char[] LineBreaks = { '\r', '\n' };
         private readonly bool includeTrailingNewline;
+        private readonly string pathPrefix;
 
-        public DeterministicM3uWriter(bool includeTrailingNewline = true)
+        public DeterministicM3uWriter(
+            bool includeTrailingNewline = true,
+            string? pathPrefix = null)
         {
             this.includeTrailingNewline = includeTrailingNewline;
+            this.pathPrefix = string.IsNullOrWhiteSpace(pathPrefix)
+                ? string.Empty
+                : pathPrefix!.Trim().Replace('\\', '/').TrimEnd('/') + "/";
         }
 
         public byte[] Write(IEnumerable<string> orderedPhonePaths)
@@ -35,7 +41,7 @@ namespace Shmembee.Infrastructure.Playlists
             return Utf8WithoutBom.GetBytes(content);
         }
 
-        private static string NormalizeLine(string value)
+        private string NormalizeLine(string value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -51,7 +57,11 @@ namespace Shmembee.Infrastructure.Playlists
                     nameof(value));
             }
 
-            return value.Trim().Replace('\\', '/');
+            string normalized = value.Trim().Replace('\\', '/');
+            return pathPrefix.Length == 0
+                || normalized.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase)
+                    ? normalized
+                    : pathPrefix + normalized.TrimStart('/');
         }
     }
 }

@@ -140,6 +140,8 @@ namespace MusicBeePlugin
         private readonly MusicBeePlaylistWriter directMusicBeeWriter;
         private readonly IMusicBeePlaylistWriter musicBeeWriter;
         private readonly TransportPhonePlaylistWriter phoneWriter;
+        private readonly FileSystemPhonePlaylistWriter generatedPlaylistWriter;
+        private readonly string generatedPlaylistBackupPath;
         private readonly IPhonePlaylistCatalogReader phoneCatalogReader;
         private readonly IPhonePlaylistSnapshotReader? phoneSnapshotReader;
         private readonly IPhoneMediaPathReader? phoneMediaPathReader;
@@ -187,7 +189,7 @@ namespace MusicBeePlugin
             phoneCatalogReader = transport;
             phoneSnapshotReader = transport;
             phoneMediaPathReader = transport;
-            phoneBackupTransport = transport;
+            phoneBackupTransport = new ReadOnlyPhoneBackupTransport();
             postSyncBackup = string.IsNullOrWhiteSpace(settings.PostSyncBackupPath)
                 ? null
                 : new PostSyncPlaylistBackup(
@@ -198,6 +200,14 @@ namespace MusicBeePlugin
                 string.IsNullOrWhiteSpace(settings.BackupPath)
                     ? System.IO.Path.Combine(storagePath, "backups")
                     : settings.BackupPath);
+            generatedPlaylistBackupPath = System.IO.Path.Combine(
+                storagePath,
+                "generated-playlist-backups");
+            generatedPlaylistWriter = new FileSystemPhonePlaylistWriter(
+                settings.GeneratedPlaylistPath,
+                generatedPlaylistBackupPath,
+                new DeterministicM3uWriter(
+                    pathPrefix: "/storage/emulated/0/"));
             string databasePath = string.IsNullOrWhiteSpace(settings.DatabasePath)
                 ? System.IO.Path.Combine(storagePath, "shmembee.db")
                 : settings.DatabasePath;
@@ -321,7 +331,8 @@ namespace MusicBeePlugin
             PlaylistDetailDiff detail,
             ReviewedPlaylistDraft draft,
             CancellationToken cancellationToken,
-            bool managePhoneBackup)
+            bool managePhoneBackup,
+            IPhonePlaylistWriter? generatedOutput = null)
         {
             ReviewedPlanResult finalized = FinalizeReviewedResult(detail, draft);
             if (!finalized.IsReady || finalized.Plan == null)
@@ -400,7 +411,7 @@ namespace MusicBeePlugin
                         phonePath)));
             return managePhoneBackup
                 ? ApplyPhoneChangingPlan(plan, cancellationToken)
-                : Coordinator().Apply(plan, cancellationToken);
+                : Coordinator(generatedOutput).Apply(plan, cancellationToken);
         }
 
         public IReadOnlyList<PlaylistApplyAllResult> ApplyAll(
@@ -582,7 +593,8 @@ namespace MusicBeePlugin
             string expectedMissingChecksum,
             IReadOnlyList<string> provenPhonePaths,
             CancellationToken cancellationToken,
-            bool managePhoneBackup)
+            bool managePhoneBackup,
+            IPhonePlaylistWriter? generatedOutput = null)
         {
             if (provenPhonePaths.Any(string.IsNullOrWhiteSpace))
             {
@@ -591,7 +603,7 @@ namespace MusicBeePlugin
             }
 
             Func<SynchronizationLifecycleResult> operation = () =>
-                Coordinator().CreatePhone(
+                Coordinator(generatedOutput).CreatePhone(
                 backingName,
                 expectedMissingChecksum,
                 provenPhonePaths,
@@ -621,10 +633,11 @@ namespace MusicBeePlugin
             string backingName,
             string expectedChecksum,
             CancellationToken cancellationToken,
-            bool managePhoneBackup)
+            bool managePhoneBackup,
+            IPhonePlaylistWriter? generatedOutput = null)
         {
             Func<SynchronizationLifecycleResult> operation = () =>
-                Coordinator().DeletePhone(
+                Coordinator(generatedOutput).DeletePhone(
                     backingName,
                     expectedChecksum,
                     cancellationToken);
@@ -644,8 +657,13 @@ namespace MusicBeePlugin
                 expectedChecksum,
                 cancellationToken);
 
-        private SynchronizationCoordinator Coordinator() =>
-            new SynchronizationCoordinator(musicBeeWriter, phoneWriter, history);
+        private SynchronizationCoordinator Coordinator(
+            IPhonePlaylistWriter? generatedOutput = null) =>
+            new SynchronizationCoordinator(
+                musicBeeWriter,
+                phoneWriter,
+                generatedOutput ?? generatedPlaylistWriter,
+                history);
 
         private SynchronizationApplyResult ApplyPhoneChangingPlan(
             SynchronizationPlan plan,
@@ -1615,8 +1633,30 @@ namespace MusicBeePlugin
             int rolledBackCount = 0;
             int processedCount = 0;
             progress?.Report(0);
-            IReadOnlyDictionary<string, HarnessPlaylistRow> currentRows =
-                RefreshPlaylistRows().ToDictionary(item => item.RowId, StringComparer.Ordinal);
+            var exportSession = new MobilePlaylistExportSession(
+                settings.GeneratedPlaylistPath,
+                generatedPlaylistBackupPath);
+            exportSession.Write(
+                "Apply",
+                "Beginning apply for " + drafts.Count + " reviewed playlist(s).");
+            var preflightProgress = new InlineProgress<HarnessOperationProgress>(update =>
+                exportSession.Write(
+                    "Preflight",
+                    update.Percentage + "% - " + update.Status));
+            IReadOnlyDictionary<string, HarnessPlaylistRow> currentRows;
+            try
+            {
+                currentRows = RefreshPlaylistRows(preflightProgress, cancellationToken)
+                    .ToDictionary(item => item.RowId, StringComparer.Ordinal);
+            }
+            catch (Exception exception)
+            {
+                exportSession.Write("Preflight error", exception.ToString());
+                throw;
+            }
+            exportSession.Write(
+                "Preflight",
+                "Playlist refresh completed with " + currentRows.Count + " row(s).");
             var preflightErrors = new List<string>();
             foreach (PlaylistReviewDraft draft in drafts)
             {
@@ -1651,12 +1691,16 @@ namespace MusicBeePlugin
 
             if (preflightErrors.Count > 0)
             {
+                string preflightSummary =
+                    "Preflight failed, so no backup or sync writes were made."
+                    + Environment.NewLine + Environment.NewLine
+                    + string.Join(Environment.NewLine, preflightErrors);
+                exportSession.Write("Result", preflightSummary);
                 return new HarnessBatchApplyResult(
                     0,
                     preflightErrors.Count,
-                    "Preflight failed, so no backup or sync writes were made."
-                        + Environment.NewLine + Environment.NewLine
-                        + string.Join(Environment.NewLine, preflightErrors),
+                    preflightSummary + Environment.NewLine + Environment.NewLine
+                        + ExportLocations(exportSession),
                     Array.Empty<string>(),
                     notStartedCount: drafts.Count);
             }
@@ -1675,21 +1719,31 @@ namespace MusicBeePlugin
                 }
                 catch (OperationCanceledException)
                 {
+                    string cancellationSummary =
+                        "Cancelled before the phone backup was created; no sync writes "
+                        + "were made.";
+                    exportSession.Write("Result", cancellationSummary);
                     return new HarnessBatchApplyResult(
                         0,
                         0,
-                        "Cancelled before the phone backup was created; no sync writes were made.",
+                        cancellationSummary + Environment.NewLine + Environment.NewLine
+                            + ExportLocations(exportSession),
                         Array.Empty<string>(),
                         wasCancelled: true,
                         notStartedCount: drafts.Count);
                 }
                 catch (Exception exception)
                 {
+                    string backupFailure =
+                        "The all-playlist phone backup could not be created, so no sync "
+                        + "writes were made: " + DescribeApplyFailure(exception.Message);
+                    exportSession.Write("Backup error", exception.ToString());
+                    exportSession.Write("Result", backupFailure);
                     return new HarnessBatchApplyResult(
                         0,
                         1,
-                        "The all-playlist phone backup could not be created, so no sync "
-                            + "writes were made: " + DescribeApplyFailure(exception.Message),
+                        backupFailure + Environment.NewLine + Environment.NewLine
+                            + ExportLocations(exportSession),
                         Array.Empty<string>(),
                         notStartedCount: drafts.Count);
                 }
@@ -1726,6 +1780,9 @@ namespace MusicBeePlugin
                             "The playlist changed after it was reviewed.");
                     }
 
+                    exportSession.Write(
+                        "Playlist",
+                        "Starting " + row.DisplayName + " (" + draft.RowId + ").");
                     SynchronizationApplyStatus status;
                     string details;
                     if (row.IsPaired)
@@ -1746,7 +1803,8 @@ namespace MusicBeePlugin
                             detail,
                             reviewed,
                             cancellationToken,
-                            managePhoneBackup: !phoneChanging);
+                            managePhoneBackup: !phoneChanging,
+                            generatedOutput: exportSession.Writer);
                         status = result.Status;
                         details = result.Details;
                     }
@@ -1757,7 +1815,8 @@ namespace MusicBeePlugin
                                 row,
                                 draft,
                                 cancellationToken,
-                                managePhoneBackup: !phoneChanging);
+                                managePhoneBackup: !phoneChanging,
+                                generatedOutput: exportSession.Writer);
                         status = result.Status;
                         details = result.Details;
                     }
@@ -1775,6 +1834,9 @@ namespace MusicBeePlugin
                     }
 
                     succeeded.Add(draft.RowId);
+                    exportSession.Write(
+                        "Playlist",
+                        row.DisplayName + " succeeded. " + details);
                     if (details.StartsWith("WARNING:", StringComparison.Ordinal))
                     {
                         warnings.Add(draft.RowId + ": " + details);
@@ -1790,6 +1852,9 @@ namespace MusicBeePlugin
                     errors.Add(
                         "• " + playlistName + ": "
                         + DescribeApplyFailure(exception.Message));
+                    exportSession.Write(
+                        "Error",
+                        playlistName + ": " + exception);
                     if (IsHungWpdDeviceFailure(exception.Message))
                     {
                         phoneConnectionLost = true;
@@ -1908,6 +1973,9 @@ namespace MusicBeePlugin
                 }
             }
 
+            summary += Environment.NewLine + Environment.NewLine
+                + ExportLocations(exportSession);
+            exportSession.Write("Result", summary);
             return new HarnessBatchApplyResult(
                 succeeded.Count,
                 errors.Count,
@@ -1917,6 +1985,10 @@ namespace MusicBeePlugin
                 rolledBackCount,
                 notStartedCount);
         }
+
+        private static string ExportLocations(MobilePlaylistExportSession session) =>
+            "Mobile playlist export: " + session.OutputDirectory
+            + Environment.NewLine + "Diagnostic log: " + session.LogPath;
 
         private static bool IsHungWpdDeviceFailure(string details) =>
             !string.IsNullOrEmpty(details)
@@ -1965,7 +2037,8 @@ namespace MusicBeePlugin
             HarnessPlaylistRow row,
             PlaylistReviewDraft draft,
             CancellationToken cancellationToken,
-            bool managePhoneBackup = true)
+            bool managePhoneBackup = true,
+            IPhonePlaylistWriter? generatedOutput = null)
         {
             if (row.MusicBeePlaylistId != null)
             {
@@ -2000,7 +2073,8 @@ namespace MusicBeePlugin
                     available.Select(item =>
                         item.ValueFor(PlaylistSide.Phone) ?? string.Empty).ToList(),
                     cancellationToken,
-                    managePhoneBackup);
+                    managePhoneBackup,
+                    generatedOutput);
                 if (created.Status != SynchronizationApplyStatus.Succeeded
                     || skipped.Count == 0)
                 {
@@ -2027,7 +2101,8 @@ namespace MusicBeePlugin
                     row.PhoneBackingName!,
                     draft.PhoneChecksum,
                     cancellationToken,
-                    managePhoneBackup);
+                    managePhoneBackup,
+                    generatedOutput);
             }
 
             PlaylistBuildResult phoneBuilt = PlaylistResultBuilder.TakeCompleteSide(
@@ -2634,6 +2709,24 @@ namespace MusicBeePlugin
             public bool Delete(string playlistUrl)
             {
                 return invokeWrite(() => inner.Delete(playlistUrl));
+            }
+        }
+
+        private sealed class ReadOnlyPhoneBackupTransport : IPhonePlaylistBackupTransport
+        {
+            public PhonePlaylistBackupResult CreatePlaylistBackup() =>
+                new PhonePlaylistBackupResult(
+                    new PhonePlaylistBackupHandle(
+                        "read-only-local-output",
+                        Array.Empty<string>()),
+                    0);
+
+            public void DeletePlaylistBackup(PhonePlaylistBackupHandle handle)
+            {
+                if (handle == null)
+                {
+                    throw new ArgumentNullException(nameof(handle));
+                }
             }
         }
 

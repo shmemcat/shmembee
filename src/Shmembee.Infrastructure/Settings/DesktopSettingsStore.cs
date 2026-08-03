@@ -18,6 +18,8 @@ namespace Shmembee.Infrastructure.Settings
         public const string DefaultPhoneMediaFolder = "Music";
         public const string DefaultPostSyncBackupPath =
             @"D:\My Documents\Shmembee Backups";
+        public const string DefaultGeneratedPlaylistPath =
+            @"D:\My Documents\Shmembee Backups\Mobile Playlists";
 
         public DesktopSettings()
         {
@@ -29,6 +31,7 @@ namespace Shmembee.Infrastructure.Settings
             DatabasePath = string.Empty;
             BackupPath = string.Empty;
             PostSyncBackupPath = DefaultPostSyncBackupPath;
+            GeneratedPlaylistPath = DefaultGeneratedPlaylistPath;
             PlaylistAssociations = new List<PlaylistAssociation>();
         }
 
@@ -61,6 +64,9 @@ namespace Shmembee.Infrastructure.Settings
 
         [DataMember(Order = 10)]
         public string PhoneMediaFolder { get; set; }
+
+        [DataMember(Order = 11)]
+        public string GeneratedPlaylistPath { get; set; }
     }
 
     [DataContract]
@@ -242,7 +248,10 @@ namespace Shmembee.Infrastructure.Settings
                 PlaylistAssociations = ValidateAssociations(settings.PlaylistAssociations),
                 PostSyncBackupPath = OptionalOrDefault(
                     settings.PostSyncBackupPath,
-                    DesktopSettings.DefaultPostSyncBackupPath)
+                    DesktopSettings.DefaultPostSyncBackupPath),
+                GeneratedPlaylistPath = OptionalOrDefault(
+                    settings.GeneratedPlaylistPath,
+                    DesktopSettings.DefaultGeneratedPlaylistPath)
             };
             return validated;
         }

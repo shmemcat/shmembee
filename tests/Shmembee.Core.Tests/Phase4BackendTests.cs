@@ -114,6 +114,49 @@ public sealed class Phase4BackendTests : IDisposable
     }
 
     [Fact]
+    public void MobileExportSessionWritesPlaylistsAndLogIntoTimestampedDirectory()
+    {
+        DateTimeOffset timestamp = new(2026, 8, 3, 1, 47, 0, TimeSpan.FromHours(-7));
+        string root = Path.Combine(temporaryDirectory, "mobile-playlists");
+        string backups = Path.Combine(temporaryDirectory, "generated-backups");
+        var session = new MobilePlaylistExportSession(root, backups, () => timestamp);
+
+        session.Writer.Replace(
+            "Driving.m3u",
+            ["Music/Artist/Track.mp3"],
+            CancellationToken.None);
+        session.Write("Playlist", "Driving exported and verified.");
+
+        string expectedDirectory = Path.Combine(root, "2026-08-03 01-47-00");
+        Assert.Equal(expectedDirectory, session.OutputDirectory);
+        Assert.False(File.Exists(Path.Combine(root, "Driving.m3u")));
+        Assert.Equal(
+            "/storage/emulated/0/Music/Artist/Track.mp3\n",
+            File.ReadAllText(Path.Combine(expectedDirectory, "Driving.m3u")));
+        Assert.Equal(
+            Path.Combine(expectedDirectory, "log", "log.txt"),
+            session.LogPath);
+        string log = File.ReadAllText(session.LogPath);
+        Assert.Contains("Mobile playlist export started.", log);
+        Assert.Contains("Driving exported and verified.", log);
+        Assert.Contains(session.RunId.ToString("D"), log);
+    }
+
+    [Fact]
+    public void MobileExportSessionUsesCollisionSuffix()
+    {
+        DateTimeOffset timestamp = new(2026, 8, 3, 1, 47, 0, TimeSpan.FromHours(-7));
+        string root = Path.Combine(temporaryDirectory, "mobile-playlists");
+        string backups = Path.Combine(temporaryDirectory, "generated-backups");
+
+        var first = new MobilePlaylistExportSession(root, backups, () => timestamp);
+        var second = new MobilePlaylistExportSession(root, backups, () => timestamp);
+
+        Assert.EndsWith("2026-08-03 01-47-00", first.OutputDirectory);
+        Assert.EndsWith("2026-08-03 01-47-00-02", second.OutputDirectory);
+    }
+
+    [Fact]
     public void DiagnosticsAggregateInjectedChecksAndPhoneProbe()
     {
         var service = new SetupDiagnosticService(

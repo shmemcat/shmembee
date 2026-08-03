@@ -670,7 +670,14 @@ public sealed class WpdSidecarPlaylistTransportTests
         {
             CallCount++;
             Assert.Equal("sidecar.exe", executablePath);
-            Assert.Equal(TimeSpan.FromSeconds(1), timeout);
+            using JsonDocument document = JsonDocument.Parse(standardInput);
+            TimeSpan expectedTimeout = string.Equals(
+                document.RootElement.GetProperty("Operation").GetString(),
+                "snapshot-media-paths",
+                StringComparison.Ordinal)
+                ? TimeSpan.FromHours(2)
+                : TimeSpan.FromSeconds(1);
+            Assert.Equal(expectedTimeout, timeout);
             return handler(standardInput);
         }
     }

@@ -9,15 +9,27 @@ namespace Shmembee.Application.Synchronization
     {
         private readonly IMusicBeePlaylistWriter musicBee;
         private readonly IPhonePlaylistWriter phone;
+        private readonly IPhonePlaylistWriter generatedOutput;
         private readonly ISynchronizationHistory history;
 
         public SynchronizationCoordinator(
             IMusicBeePlaylistWriter musicBee,
             IPhonePlaylistWriter phone,
             ISynchronizationHistory history)
+            : this(musicBee, phone, phone, history)
+        {
+        }
+
+        public SynchronizationCoordinator(
+            IMusicBeePlaylistWriter musicBee,
+            IPhonePlaylistWriter phone,
+            IPhonePlaylistWriter generatedOutput,
+            ISynchronizationHistory history)
         {
             this.musicBee = musicBee ?? throw new ArgumentNullException(nameof(musicBee));
             this.phone = phone ?? throw new ArgumentNullException(nameof(phone));
+            this.generatedOutput = generatedOutput
+                ?? throw new ArgumentNullException(nameof(generatedOutput));
             this.history = history ?? throw new ArgumentNullException(nameof(history));
         }
 
@@ -56,7 +68,7 @@ namespace Shmembee.Application.Synchronization
             try
             {
                 history.Started(plan);
-                phoneBackup = phone.Backup(
+                phoneBackup = generatedOutput.Backup(
                     plan.PhoneBackingName,
                     plan.OperationId);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -96,13 +108,13 @@ namespace Shmembee.Application.Synchronization
                 }
 
                 phoneChanged = true;
-                phone.Replace(
+                generatedOutput.Replace(
                     plan.PhoneBackingName,
                     plan.Tracks.Select(track => track.PhonePath).ToList(),
                     cancellationToken);
 
                 PlaylistState verifiedMusicBee = musicBee.Read(plan.MusicBeePlaylistUrl);
-                PlaylistState verifiedPhone = phone.Read(plan.PhoneBackingName);
+                PlaylistState verifiedPhone = generatedOutput.Read(plan.PhoneBackingName);
                 string expectedMusicBee = PlaylistChecksum.Compute(proposedMusicBee);
                 string expectedPhone = PlaylistChecksum.Compute(
                     plan.Tracks.Select(track => track.PhonePath));
@@ -190,11 +202,11 @@ namespace Shmembee.Application.Synchronization
                     "The phone playlist changed before creation.");
             }
 
-            PlaylistBackup backup = phone.Backup(backingName, Guid.NewGuid());
+            PlaylistBackup backup = generatedOutput.Backup(backingName, Guid.NewGuid());
             try
             {
-                phone.Replace(backingName, phonePaths, cancellationToken);
-                PlaylistState verified = phone.Read(backingName);
+                generatedOutput.Replace(backingName, phonePaths, cancellationToken);
+                PlaylistState verified = generatedOutput.Read(backingName);
                 string expected = PlaylistChecksum.Compute(phonePaths);
                 if (!verified.Exists
                     || !string.Equals(verified.Checksum, expected, StringComparison.Ordinal))
@@ -204,13 +216,13 @@ namespace Shmembee.Application.Synchronization
                 }
 
                 return SynchronizationLifecycleResult.Succeeded(
-                    "Phone playlist created and verified.",
+                    "Mobile playlist file generated and verified; the phone was not changed.",
                     null,
                     verified);
             }
             catch (Exception exception)
             {
-                return LifecycleFailure(exception, () => phone.Restore(backup));
+                return LifecycleFailure(exception, () => generatedOutput.Restore(backup));
             }
         }
 
@@ -272,22 +284,22 @@ namespace Shmembee.Application.Synchronization
                     "The phone playlist changed before deletion.");
             }
 
-            PlaylistBackup backup = phone.Backup(backingName, Guid.NewGuid());
+            PlaylistBackup backup = generatedOutput.Backup(backingName, Guid.NewGuid());
             try
             {
-                phone.Delete(backingName, cancellationToken);
-                if (phone.Read(backingName).Exists)
+                generatedOutput.Delete(backingName, cancellationToken);
+                if (generatedOutput.Read(backingName).Exists)
                 {
                     throw new InvalidOperationException(
-                        "Phone playlist deletion verification failed.");
+                        "Generated mobile playlist deletion verification failed.");
                 }
 
                 return SynchronizationLifecycleResult.Succeeded(
-                    "Phone playlist deleted and verified.");
+                    "Generated mobile playlist deleted; the phone was not changed.");
             }
             catch (Exception exception)
             {
-                return LifecycleFailure(exception, () => phone.Restore(backup));
+                return LifecycleFailure(exception, () => generatedOutput.Restore(backup));
             }
         }
 
@@ -406,8 +418,8 @@ namespace Shmembee.Application.Synchronization
             {
                 try
                 {
-                    phone.Restore(phoneBackup);
-                    PlaylistState restoredPhone = phone.Read(plan.PhoneBackingName);
+                    generatedOutput.Restore(phoneBackup);
+                    PlaylistState restoredPhone = generatedOutput.Read(plan.PhoneBackingName);
                     if (restoredPhone.Exists != phoneBackup.Existed
                         || (phoneBackup.Existed
                             && !string.Equals(
