@@ -1,0 +1,10 @@
+* text=auto
+
+*.cs text eol=lf
+*.csproj text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+
+# Cross-repository byte fixtures include malformed encodings and deliberate
+# line-ending variants. Manifests and documentation remain normalized text.
+tests/Shmembee.Core.Tests/Fixtures/contract-fixtures/**/bytes/** -text
