@@ -1,0 +1,12 @@
+{
+  "contract": "semantic-checksum-v1",
+  "rationale": "Checksum input is already-normalized ordered records joined by LF without trailing LF; existence is deliberately outside this checksum.",
+  "cases": [
+    { "name": "empty-existing-or-absent", "rationale": "Both absent state and an existing empty playlist hash empty bytes; callers track existence separately.", "paths": [], "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+    { "name": "single", "rationale": "No trailing LF participates in the checksum.", "paths": ["Music/A.mp3"], "sha256": "f719a8cf9a89aae89b87b7235a4fc649127dabc73976707a6eacaba66451cb7f" },
+    { "name": "duplicates", "rationale": "Multiplicity participates in the checksum.", "paths": ["Music/A.mp3", "Music/A.mp3", "Music/B.mp3"], "sha256": "bc4c17d2a33abeb0149ac7259dde7b436e5e868b50c75e2f650936ff306d4ace" },
+    { "name": "reordered", "rationale": "Order participates in the checksum.", "paths": ["Music/B.mp3", "Music/A.mp3", "Music/A.mp3"], "sha256": "cae55a00904045725e372cf3160fa9c795ddb334a575776df32eb6ebce57549f" },
+    { "name": "nfc", "rationale": "The utility does not normalize; normalized NFC input is hashed literally.", "paths": ["Music/Café.mp3"], "sha256": "a2d23e8e756978838abae55604bb1c0be7a63e29a558ba9280262ba1977df4dd" },
+    { "name": "nfd", "rationale": "Unnormalized NFD bytes intentionally differ, proving normalization belongs upstream.", "paths": ["Music/Café.mp3"], "sha256": "ecad58738bd615e4d8ecdfd26c71e2b119d1326e0bdc95a6efc89072a6a8a099" }
+  ]
+}

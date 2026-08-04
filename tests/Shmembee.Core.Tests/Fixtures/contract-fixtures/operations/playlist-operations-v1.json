@@ -1,0 +1,55 @@
+{
+  "contract": "playlist-operations-v1",
+  "rationale": "Occurrence indexes are zero-based; add is idempotent and remove deletes all matches under explicit volume and case policy.",
+  "cases": [
+    {
+      "name": "duplicates",
+      "rationale": "Insensitive membership reports every matching duplicate and remove-all retains unrelated order.",
+      "volume": "primary",
+      "targetVolume": "primary",
+      "policy": "INSENSITIVE",
+      "paths": ["Music/A.mp3", "Music/B.mp3", "music/a.mp3"],
+      "target": "Music/A.mp3",
+      "indexes": [0, 2],
+      "add": ["Music/A.mp3", "Music/B.mp3", "music/a.mp3"],
+      "remove": ["Music/B.mp3"]
+    },
+    {
+      "name": "absent",
+      "rationale": "Add appends one target only when absent.",
+      "volume": "primary",
+      "targetVolume": "primary",
+      "policy": "INSENSITIVE",
+      "paths": ["Music/B.mp3"],
+      "target": "Music/A.mp3",
+      "indexes": [],
+      "add": ["Music/B.mp3", "Music/A.mp3"],
+      "remove": ["Music/B.mp3"]
+    },
+    {
+      "name": "case-sensitive",
+      "rationale": "Sensitive policy does not conflate path case.",
+      "volume": "primary",
+      "targetVolume": "primary",
+      "policy": "SENSITIVE",
+      "paths": ["music/a.mp3"],
+      "target": "Music/A.mp3",
+      "indexes": [],
+      "add": ["music/a.mp3", "Music/A.mp3"],
+      "remove": ["music/a.mp3"]
+    },
+    {
+      "name": "different-volume",
+      "rationale": "Identical normalized paths on another volume do not match.",
+      "volume": "0123-4567",
+      "targetVolume": "primary",
+      "policy": "INSENSITIVE",
+      "paths": ["Music/A.mp3"],
+      "target": "Music/A.mp3",
+      "indexes": [],
+      "add": ["Music/A.mp3", "Music/A.mp3"],
+      "addVolumes": ["0123-4567", "primary"],
+      "remove": ["Music/A.mp3"]
+    }
+  ]
+}

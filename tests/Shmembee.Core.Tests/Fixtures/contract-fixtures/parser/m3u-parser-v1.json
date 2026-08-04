@@ -1,0 +1,69 @@
+{
+  "contract": "m3u-parser-v1",
+  "rationale": "Match desktop StreamReader line, BOM, EXTINF, order, and duplicate behavior with strict decoding and platform-neutral typed error codes.",
+  "cases": [
+    {
+      "name": "extended-utf8",
+      "rationale": "Comments and blanks do not consume metadata; source paths are trimmed.",
+      "input": "parser/bytes/extended-utf8.m3u",
+      "records": [
+        { "line": 4, "source": "/storage/emulated/0/Music/A.mp3", "normalized": "Music/A.mp3", "duration": 123, "title": " Title" },
+        { "line": 6, "source": "Music/B.mp3", "normalized": "Music/B.mp3", "duration": null, "title": "Unknown" }
+      ]
+    },
+    { "name": "utf8-bom", "rationale": "A UTF-8 BOM is detected and omitted.", "input": "parser/bytes/utf8-bom.m3u", "records": [{ "line": 1, "source": "Music/utf8.mp3", "normalized": "Music/utf8.mp3" }] },
+    { "name": "utf16le-bom", "rationale": "Desktop BOM detection accepts UTF-16LE.", "input": "parser/bytes/utf16le-bom.m3u", "records": [{ "line": 1, "source": "Music/Unicode-é.mp3", "normalized": "Music/Unicode-é.mp3" }] },
+    { "name": "utf16be-bom", "rationale": "Desktop BOM detection accepts UTF-16BE.", "input": "parser/bytes/utf16be-bom.m3u", "records": [{ "line": 1, "source": "Music/utf16be.mp3", "normalized": "Music/utf16be.mp3" }] },
+    { "name": "utf32le-bom", "rationale": "Desktop BOM detection accepts UTF-32LE.", "input": "parser/bytes/utf32le-bom.m3u", "records": [{ "line": 1, "source": "Music/utf32le.mp3", "normalized": "Music/utf32le.mp3" }] },
+    { "name": "utf32be-bom", "rationale": "Desktop BOM detection accepts UTF-32BE.", "input": "parser/bytes/utf32be-bom.m3u", "records": [{ "line": 1, "source": "Music/utf32be.mp3", "normalized": "Music/utf32be.mp3" }] },
+    {
+      "name": "line-endings",
+      "rationale": "CR, LF, CRLF, and an unterminated final line each produce one physical line.",
+      "input": "parser/bytes/line-endings.m3u",
+      "records": [
+        { "line": 1, "source": "Music/lf.mp3", "normalized": "Music/lf.mp3" },
+        { "line": 2, "source": "Music/crlf.mp3", "normalized": "Music/crlf.mp3" },
+        { "line": 3, "source": "Music/cr.mp3", "normalized": "Music/cr.mp3" },
+        { "line": 4, "source": "Music/final.mp3", "normalized": "Music/final.mp3" }
+      ]
+    },
+    {
+      "name": "extinf-cases",
+      "rationale": "Signed duration, invalid and overflow duration, nullable title, persistence, last-wins, and dangling metadata match desktop v1.",
+      "input": "parser/bytes/extinf-cases.m3u",
+      "records": [
+        { "line": 3, "source": "Music/a.mp3", "normalized": "Music/a.mp3", "duration": -1, "title": " Negative" },
+        { "line": 6, "source": "Music/b.mp3", "normalized": "Music/b.mp3", "duration": null, "title": "Overflow" },
+        { "line": 8, "source": "Music/c.mp3", "normalized": "Music/c.mp3", "duration": null, "title": null },
+        { "line": 10, "source": "Music/d.mp3", "normalized": "Music/d.mp3", "duration": 5, "title": null },
+        { "line": 12, "source": "Music/e.mp3", "normalized": "Music/e.mp3", "duration": 6, "title": "  title" },
+        { "line": 15, "source": "Music/f.mp3", "normalized": "Music/f.mp3", "duration": 2, "title": "second" }
+      ]
+    },
+    {
+      "name": "records-and-unicode",
+      "rationale": "Whitespace is ignored, duplicates and order remain, NFC normalization is explicit, and hash-prefixed paths are comments in v1.",
+      "input": "parser/bytes/records.m3u",
+      "records": [
+        { "line": 3, "source": "Music/Café.mp3", "normalized": "Music/Café.mp3" },
+        { "line": 4, "source": "Music/Café.mp3", "normalized": "Music/Café.mp3" }
+      ]
+    },
+    {
+      "name": "preserve-extended-info-disabled",
+      "rationale": "EXTINF records are consumed but duration and title are omitted when preservation is disabled.",
+      "input": "parser/bytes/extinf-cases.m3u",
+      "preserveExtendedInfo": false,
+      "records": [
+        { "line": 3, "source": "Music/a.mp3", "normalized": "Music/a.mp3" },
+        { "line": 6, "source": "Music/b.mp3", "normalized": "Music/b.mp3" },
+        { "line": 8, "source": "Music/c.mp3", "normalized": "Music/c.mp3" },
+        { "line": 10, "source": "Music/d.mp3", "normalized": "Music/d.mp3" },
+        { "line": 12, "source": "Music/e.mp3", "normalized": "Music/e.mp3" },
+        { "line": 15, "source": "Music/f.mp3", "normalized": "Music/f.mp3" }
+      ]
+    },
+    { "name": "malformed-utf8", "rationale": "Malformed input fails strict decoding.", "input": "parser/bytes/malformed-utf8.m3u", "errorCode": "malformed-encoding" },
+    { "name": "normalized-empty", "rationale": "A production record that normalizes empty is a typed parser failure.", "input": "parser/bytes/normalized-empty.m3u", "errorCode": "normalized-path-empty", "errorLine": 1 }
+  ]
+}

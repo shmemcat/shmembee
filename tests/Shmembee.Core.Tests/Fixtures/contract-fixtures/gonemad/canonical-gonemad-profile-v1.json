@@ -1,0 +1,15 @@
+{
+  "contract": "canonical-gonemad-profile-v1",
+  "rationale": "Mutation is allowed only when deterministic writer output exactly equals canonical primary-storage input bytes.",
+  "cases": [
+    { "name": "empty", "rationale": "Zero-byte empty is canonical.", "input": "writer/bytes/empty.m3u", "writable": true, "reasonCodes": [] },
+    { "name": "canonical", "rationale": "Absolute primary path records with LF and trailing LF are canonical.", "input": "writer/bytes/canonical.m3u", "writable": true, "reasonCodes": [] },
+    { "name": "metadata", "rationale": "Metadata is readable but not path-only.", "input": "gonemad/bytes/metadata.m3u", "writable": false, "reasonCodes": ["non-path-record"] },
+    { "name": "relative", "rationale": "Relative output is outside the writable profile.", "input": "writer/bytes/trim-and-slashes.m3u", "writable": false, "reasonCodes": ["not-canonical-absolute-primary-path"] },
+    { "name": "crlf", "rationale": "Only LF line endings are writable.", "input": "gonemad/bytes/crlf.m3u", "writable": false, "reasonCodes": ["non-lf-line-ending"] },
+    { "name": "no-trailing-lf", "rationale": "Nonempty canonical output requires trailing LF.", "input": "gonemad/bytes/no-trailing-lf.m3u", "writable": false, "reasonCodes": ["missing-trailing-lf"] },
+    { "name": "utf8-bom", "rationale": "Canonical UTF-8 has no BOM.", "input": "gonemad/bytes/utf8-bom.m3u", "writable": false, "reasonCodes": ["utf8-bom"] },
+    { "name": "blank-record", "rationale": "Every physical record must be a nonblank path.", "input": "gonemad/bytes/blank-record.m3u", "writable": false, "reasonCodes": ["blank-record"] },
+    { "name": "malformed-utf8", "rationale": "Writable input must decode as strict UTF-8.", "input": "gonemad/bytes/malformed-utf8.m3u", "writable": false, "reasonCodes": ["malformed-utf8"] }
+  ]
+}

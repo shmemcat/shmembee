@@ -1,0 +1,36 @@
+{
+  "fixtureManifestVersion": 1,
+  "rationale": "Platform-neutral index of Phase 2 contracts; every child manifest carries exact expected data and case rationale for independent Kotlin and C# consumers.",
+  "contracts": [
+    {
+      "id": "m3u-parser-v1",
+      "manifest": "parser/m3u-parser-v1.json",
+      "rationale": "Desktop-compatible playlist parsing."
+    },
+    {
+      "id": "phone-path-v1",
+      "manifest": "normalization/phone-path-v1.json",
+      "rationale": "Path normalization and explicit comparison."
+    },
+    {
+      "id": "semantic-checksum-v1",
+      "manifest": "checksums/semantic-checksum-v1.json",
+      "rationale": "Ordered semantic identity independent of existence."
+    },
+    {
+      "id": "m3u-writer-v1",
+      "manifest": "writer/m3u-writer-v1.json",
+      "rationale": "Deterministic path-only UTF-8 output."
+    },
+    {
+      "id": "canonical-gonemad-profile-v1",
+      "manifest": "gonemad/canonical-gonemad-profile-v1.json",
+      "rationale": "Typed mutation eligibility."
+    },
+    {
+      "id": "playlist-operations-v1",
+      "manifest": "operations/playlist-operations-v1.json",
+      "rationale": "Pure membership and edit transforms."
+    }
+  ]
+}

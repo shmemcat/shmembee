@@ -31,4 +31,9 @@
              Link="Windows\WpdDiagnosticJournal.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Fixtures\**\*"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

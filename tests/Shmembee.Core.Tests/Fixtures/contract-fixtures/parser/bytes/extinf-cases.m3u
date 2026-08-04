@@ -1,0 +1,16 @@
+#extinf:-1, Negative 
+# comment
+Music/a.mp3
+#EXTINF:2147483648,Overflow
+
+Music/b.mp3
+#EXTINF:nope
+Music/c.mp3
+#EXTINF:5,
+Music/d.mp3
+#EXTINF:6,  title  
+Music/e.mp3
+#EXTINF:1,first
+#EXTINF:2,second
+Music/f.mp3
+#EXTINF:3,dangling

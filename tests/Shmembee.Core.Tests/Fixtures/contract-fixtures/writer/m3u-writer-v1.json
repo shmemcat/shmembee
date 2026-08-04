@@ -1,0 +1,16 @@
+{
+  "contract": "m3u-writer-v1",
+  "rationale": "Freeze deterministic UTF-8 path-only bytes, optional trailing LF, and prefix behavior for Kotlin and C#.",
+  "cases": [
+    { "name": "empty", "rationale": "Empty input always emits zero bytes.", "paths": [], "includeTrailingNewline": true, "output": "writer/bytes/empty.m3u" },
+    { "name": "canonical", "rationale": "Order and duplicates are retained with LF and trailing LF.", "paths": ["/storage/emulated/0/Music/A.mp3", "/storage/emulated/0/Music/B.mp3"], "includeTrailingNewline": true, "output": "writer/bytes/canonical.m3u" },
+    { "name": "trim-and-slashes", "rationale": "Records are trimmed and backslashes become forward slashes.", "paths": [" Music\\A.mp3 "], "includeTrailingNewline": true, "output": "writer/bytes/trim-and-slashes.m3u" },
+    { "name": "no-trailing-newline", "rationale": "The optional trailing newline can be disabled.", "paths": ["Music/A.mp3"], "includeTrailingNewline": false, "output": "writer/bytes/no-trailing-newline.m3u" },
+    { "name": "prefix-and-already-prefixed", "rationale": "Prefix is normalized once and detected case-insensitively.", "paths": ["Music/A.mp3", "/STORAGE/EMULATED/0/Music/B.mp3"], "prefix": " /storage/emulated/0/ ", "includeTrailingNewline": true, "output": "writer/bytes/prefixed.m3u" }
+  ],
+  "rejections": [
+    { "name": "blank", "rationale": "Blank paths are unsafe records.", "path": " ", "errorCode": "blank-path" },
+    { "name": "cr", "rationale": "CR injection is rejected.", "path": "Music/A\rB.mp3", "errorCode": "line-break" },
+    { "name": "lf", "rationale": "LF injection is rejected.", "path": "Music/A\nB.mp3", "errorCode": "line-break" }
+  ]
+}

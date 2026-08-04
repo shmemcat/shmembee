@@ -1,0 +1,21 @@
+{
+  "contract": "phone-path-v1",
+  "rationale": "Freeze desktop-compatible normalization separately from explicit volume and case comparison.",
+  "cases": [
+    { "name": "null", "rationale": "Null is rejected.", "input": null, "expected": null },
+    { "name": "blank", "rationale": "Blank is rejected.", "input": " \t ", "expected": null },
+    { "name": "slashes-dots-trim", "rationale": "Trim, slash replacement, separator collapse, and dot resolution are ordered.", "input": " .\\Music//A/../B.mp3 ", "expected": "Music/B.mp3" },
+    { "name": "repeated-leading-dot", "rationale": "Exact leading ./ is removed repeatedly.", "input": "././Music/A.mp3", "expected": "Music/A.mp3" },
+    { "name": "primary-root-case-insensitive", "rationale": "One primary root is removed case-insensitively.", "input": "/STORAGE/EMULATED/0/Music/Café.mp3", "expected": "Music/Café.mp3" },
+    { "name": "above-root", "rationale": "Above-root traversal is silently discarded in v1.", "input": "../../", "expected": "" },
+    { "name": "sdcard-not-alias", "rationale": "The /sdcard alias has no special meaning.", "input": "/sdcard/Music/A.mp3", "expected": "sdcard/Music/A.mp3" },
+    { "name": "uri-not-decoded", "rationale": "URI syntax and percent escapes are not interpreted.", "input": "content://media/Music%20A.mp3", "expected": "content:/media/Music%20A.mp3" },
+    { "name": "arbitrary-absolute-root", "rationale": "A remaining leading slash is removed by empty-segment collapse.", "input": "/other/root/A.mp3", "expected": "other/root/A.mp3" },
+    { "name": "case-preserved", "rationale": "Normalization does not fold case.", "input": "MUSIC/A.MP3", "expected": "MUSIC/A.MP3" }
+  ],
+  "comparison": [
+    { "rationale": "Case folding is an explicit policy.", "leftVolume": "primary", "left": "Music/A.mp3", "rightVolume": "primary", "right": "music/a.mp3", "policy": "INSENSITIVE", "matches": true },
+    { "rationale": "Sensitive comparison preserves case.", "leftVolume": "primary", "left": "Music/A.mp3", "rightVolume": "primary", "right": "music/a.mp3", "policy": "SENSITIVE", "matches": false },
+    { "rationale": "Matching never conflates volumes.", "leftVolume": "primary", "left": "Music/A.mp3", "rightVolume": "0123-4567", "right": "Music/A.mp3", "policy": "INSENSITIVE", "matches": false }
+  ]
+}

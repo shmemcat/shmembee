@@ -1,0 +1,6 @@
+#EXTM3U
+# comment
+#EXTINF:123, Title 
+ /storage/emulated/0/Music/A.mp3 
+#EXTINF:nope,Unknown
+Music/B.mp3
