@@ -70,25 +70,40 @@ The general engine computes reviewed proposals; the MusicBee host exposes
 playlist pairing, per-track membership choices, order selection, and batch
 application.
 
-## Transactional synchronization
+## Snapshot review and local export
 
-Phase 3 adds an explicit apply boundary for reviewed proposals:
+Keep the PC library and phone files unchanged by other applications while
+reviewing in Shmembee. Opening the main window or explicitly choosing Refresh
+reads the phone playlists and media paths once. Reviews and Apply use that
+snapshot; the phone can be disconnected after loading. Refresh requires reviews
+to be confirmed again, including reviews restored from a previous session.
 
-- Both inputs are re-read and checksum-checked before mutation.
-- MusicBee writes use only canonical indexed URLs and `Playlist_SetFiles`.
-- Phone M3Us are deterministic UTF-8, LF-delimited files with ordered duplicate
-  occurrences preserved.
-- The previous phone file and MusicBee sequence are retained for rollback.
-- Both sides are re-read and verified before an accepted baseline is committed.
-- Failed or cancelled operations restore both sides and do not advance the
-  baseline.
-- SQLite records started, completed, and failed operations plus the latest
-  accepted ordered baseline.
+- Phone access is read-only and confined to loading the snapshot. There is no
+  automatic phone refresh after Apply.
+- Original phone playlist bytes are saved locally under
+  `<backup root>/Backups/Mobile Playlist Backups/<timestamp>` during loading.
+- MusicBee playlists are backed up under
+  `<backup root>/MusicBee Playlists/<date>/<time>` before applying a batch.
+- Apply uses the reviewed track matching and ordering, updates MusicBee through
+  `Playlist_SetFiles`, and verifies the local results. Unchanged MusicBee contents
+  are not rewritten.
+- Mobile M3Us are generated under `<mobile export root>/<timestamp>` as UTF-8,
+  LF-delimited files. Order, duplicates, and Android paths are preserved.
+- Copy those M3Us to the phone manually. `TRANSFER.txt` lists any phone playlists
+  to delete manually; an absent export file does not delete a phone playlist.
+- A failed or cancelled playlist restores its MusicBee contents and removes its
+  incomplete export. Earlier successful changes and exports remain available.
+  A rollback failure stops the batch and directs the user to the local backup.
+- Successfully processed rows are disabled until the next Refresh, preventing
+  accidental reapplication against the old phone snapshot. Other reviewed rows
+  can be applied in another batch while offline.
+- Local exports are recorded as `exported`, not as an accepted phone baseline.
+  A later explicit Refresh accepts the baseline only when the observed phone and
+  MusicBee checksums both match the pending export. Pending exports survive restart.
 
-The host discovers MusicBee and phone playlists, auto-pairs normalized names,
-and keeps unmatched or ambiguous endpoints visible for review. Checked changes
-are applied sequentially, with each playlist pair independently backed up,
-stale-checked, written, and verified.
+The apply log records per-playlist and total elapsed time. Controller integration
+tests simulate phone disconnection, partial failure, cancellation, and manual copy;
+they run as part of the solution tests without accessing a real device or MusicBee.
 
 ## License
 
