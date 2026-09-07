@@ -25,7 +25,7 @@ public sealed class Phase4BackendTests : IDisposable
         Assert.Equal("gmmp/playlists", settings.PlaylistFolder);
         Assert.Equal("Music", settings.PhoneMediaFolder);
         Assert.Equal(
-            @"D:\My Documents\Shmembee Backups",
+            @"D:\My Documents\Shmembee",
             settings.PostSyncBackupPath);
         Assert.Empty(settings.PlaylistAssociations);
     }

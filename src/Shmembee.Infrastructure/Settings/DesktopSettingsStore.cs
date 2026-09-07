@@ -17,9 +17,9 @@ namespace Shmembee.Infrastructure.Settings
         public const string DefaultPlaylistFolder = "gmmp/playlists";
         public const string DefaultPhoneMediaFolder = "Music";
         public const string DefaultPostSyncBackupPath =
-            @"D:\My Documents\Shmembee Backups";
+            @"D:\My Documents\Shmembee";
         public const string DefaultGeneratedPlaylistPath =
-            @"D:\My Documents\Shmembee Backups\Mobile Playlists";
+            @"D:\My Documents\Shmembee\Mobile Playlists";
 
         public DesktopSettings()
         {
