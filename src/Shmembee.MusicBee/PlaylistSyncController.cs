@@ -836,7 +836,7 @@ namespace MusicBeePlugin
             {
                 if (postSyncBackup != null)
                 {
-                    details = " Post-sync phone M3U backup: "
+                    details = " Mobile playlist backup (phone snapshot): "
                         + postSyncBackup.Create() + ".";
                 }
                 if (musicBeePlaylistBackup != null)

@@ -107,8 +107,9 @@ public sealed class Phase4BackendTests : IDisposable
         string first = backup.Create();
         string second = backup.Create();
 
-        Assert.Equal(Path.Combine(root, "2026-08-01 16-32-45"), first);
-        Assert.Equal(Path.Combine(root, "2026-08-01 16-32-45-02"), second);
+        string mobileBackupRoot = Path.Combine(root, "Backups", "Mobile Playlist Backups");
+        Assert.Equal(Path.Combine(mobileBackupRoot, "2026-08-01 16-32-45"), first);
+        Assert.Equal(Path.Combine(mobileBackupRoot, "2026-08-01 16-32-45-02"), second);
         Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(first, "Road.m3u")));
         Assert.Equal(new byte[] { 4, 5 }, File.ReadAllBytes(Path.Combine(first, "Mix.M3U8")));
     }

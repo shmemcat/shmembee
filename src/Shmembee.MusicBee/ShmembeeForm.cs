@@ -847,7 +847,7 @@ namespace MusicBeePlugin
             panel.Controls.Add(CreateField("Playlist folder", playlistFolderText), 0, 4);
             panel.Controls.Add(CreateField("Phone media folder", phoneMediaFolderText), 0, 5);
             panel.Controls.Add(
-                CreateField("Post-sync M3U backup folder", postSyncBackupPathText),
+                CreateField("Playlist backup root folder", postSyncBackupPathText),
                 0,
                 6);
             var save = new Button

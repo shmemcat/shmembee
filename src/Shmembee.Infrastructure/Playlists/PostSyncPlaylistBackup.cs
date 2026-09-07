@@ -27,7 +27,10 @@ namespace Shmembee.Infrastructure.Playlists
                     nameof(rootDirectory));
             }
 
-            this.rootDirectory = Path.GetFullPath(rootDirectory);
+            this.rootDirectory = Path.Combine(
+                Path.GetFullPath(rootDirectory),
+                "Backups",
+                "Mobile Playlist Backups");
             this.now = now ?? (() => DateTimeOffset.Now);
         }
 
