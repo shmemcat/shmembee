@@ -88,8 +88,9 @@ namespace Shmembee.Application.Synchronization
                 IReadOnlyList<string> proposedMusicBee = plan.Tracks
                     .Select(track => track.MusicBeeUrl)
                     .ToList();
-                musicBeeChanged = true;
-                if (!musicBee.Replace(plan.MusicBeePlaylistUrl, proposedMusicBee))
+                musicBeeChanged = PlaylistChecksum.Compute(proposedMusicBee)
+                    != beforeMusicBeeWrite.Checksum;
+                if (musicBeeChanged && !musicBee.Replace(plan.MusicBeePlaylistUrl, proposedMusicBee))
                 {
                     throw new InvalidOperationException(
                         "MusicBee rejected the proposed playlist.");
@@ -138,8 +139,8 @@ namespace Shmembee.Application.Synchronization
                 }
                 catch (Exception exception)
                 {
-                    string details = "Both playlists were written and verified, but "
-                        + "the accepted baseline could not be committed: "
+                    string details = "The playlist results were verified, but "
+                        + "local history could not be committed: "
                         + exception.Message;
                     TryRecordCommitPending(plan, details);
                     return SynchronizationApplyResult.CommitPending(

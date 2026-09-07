@@ -42,6 +42,12 @@ namespace Shmembee.Infrastructure.Playlists
                 OutputDirectory,
                 backupDirectory,
                 new DeterministicM3uWriter(pathPrefix: "/storage/emulated/0/"));
+            File.WriteAllText(Path.Combine(OutputDirectory, "TRANSFER.txt"),
+                "Copy the M3U files in this folder to your phone playlist folder.\r\n"
+                + "The phone has not been changed by Shmembee.\r\n"
+                + "Only completed exports should be copied. See log/log.txt for results.\r\n"
+                + "After copying, explicitly Refresh Shmembee to read the phone again.\r\n",
+                new UTF8Encoding(false));
             Write("Run", "Mobile playlist export started.");
             Write("Run", "Output directory: " + OutputDirectory);
             Write("Run", "Diagnostic log: " + LogPath);
@@ -56,6 +62,15 @@ namespace Shmembee.Infrastructure.Playlists
         public string LogPath { get; }
 
         public IPhonePlaylistWriter Writer { get; }
+
+        public void RecordManualDeletion(string backingName)
+        {
+            // Use the writer's path validation before recording a manual file operation.
+            Writer.Read(backingName);
+            File.AppendAllText(Path.Combine(OutputDirectory, "TRANSFER.txt"),
+                "DELETE MANUALLY from the phone playlist folder: " + backingName
+                + Environment.NewLine, new UTF8Encoding(false));
+        }
 
         public void Write(string stage, string message)
         {

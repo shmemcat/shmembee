@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
+using System.Runtime.Serialization.Json;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Shmembee.Application.Synchronization;
 
@@ -10,9 +13,11 @@ namespace Shmembee.Infrastructure.Persistence
     {
         private readonly string databasePath;
         private readonly string connectionString;
+        private readonly bool exportsOnly;
 
-        public SynchronizationHistoryStore(string databasePath)
+        public SynchronizationHistoryStore(string databasePath, bool exportsOnly = false)
         {
+            this.exportsOnly = exportsOnly;
             this.databasePath = databasePath;
             connectionString = new SqliteConnectionStringBuilder
             {
@@ -62,6 +67,19 @@ VALUES (
             PlaylistState musicBeeResult,
             PlaylistState phoneResult)
         {
+            if (exportsOnly)
+            {
+                RecordExport(plan, musicBeeResult, phoneResult);
+                return;
+            }
+            AcceptBaseline(plan, musicBeeResult, phoneResult);
+        }
+
+        public void AcceptBaseline(
+            SynchronizationPlan plan,
+            PlaylistState musicBeeResult,
+            PlaylistState phoneResult)
+        {
             using (var connection = new SqliteConnection(connectionString))
             {
                 connection.Open();
@@ -74,10 +92,13 @@ VALUES (
 UPDATE sync_operations
 SET completed_utc = $completedUtc,
     status = 'completed',
+    playlist_id = $playlistId,
+    details = 'Matching MusicBee and phone playlist contents observed.',
     verified_musicbee_checksum = $musicBeeChecksum,
     verified_phone_checksum = $phoneChecksum
 WHERE id = $id;";
                         command.Parameters.AddWithValue("$completedUtc", UtcNow());
+                        command.Parameters.AddWithValue("$playlistId", plan.PlaylistId);
                         command.Parameters.AddWithValue(
                             "$musicBeeChecksum",
                             musicBeeResult.Checksum);
@@ -173,9 +194,95 @@ VALUES (
                         }
                     }
 
+                    using (SqliteCommand clearPending = connection.CreateCommand())
+                    {
+                        clearPending.Transaction = transaction;
+                        clearPending.CommandText = @"
+DELETE FROM pending_playlist_exports
+WHERE musicbee_url = $url AND phone_backing_name = $name;";
+                        clearPending.Parameters.AddWithValue("$url", plan.MusicBeePlaylistUrl);
+                        clearPending.Parameters.AddWithValue("$name", plan.PhoneBackingName);
+                        clearPending.ExecuteNonQuery();
+                    }
                     transaction.Commit();
                 }
             }
+        }
+
+        private void RecordExport(
+            SynchronizationPlan plan, PlaylistState musicBee, PlaylistState generatedPhone)
+        {
+            string payload;
+            using (var stream = new MemoryStream())
+            {
+                new DataContractJsonSerializer(typeof(PendingPlaylistExport)).WriteObject(
+                    stream, PendingPlaylistExport.From(plan, musicBee, generatedPhone));
+                payload = Encoding.UTF8.GetString(stream.ToArray());
+            }
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                using (SqliteTransaction transaction = connection.BeginTransaction())
+                using (SqliteCommand command = connection.CreateCommand())
+                {
+                    command.Transaction = transaction;
+                    command.CommandText = @"
+UPDATE sync_operations SET status = 'exported', completed_utc = $time,
+    verified_musicbee_checksum = $checksum,
+    details = 'Exported locally; awaiting manual phone copy and explicit refresh.'
+WHERE id = $id;
+INSERT INTO pending_playlist_exports(musicbee_url, phone_backing_name, payload)
+VALUES ($url, $name, $payload)
+ON CONFLICT(musicbee_url, phone_backing_name) DO UPDATE SET payload = excluded.payload;";
+                    command.Parameters.AddWithValue("$time", UtcNow());
+                    command.Parameters.AddWithValue("$checksum", musicBee.Checksum);
+                    command.Parameters.AddWithValue("$id", plan.OperationId.ToString("D"));
+                    command.Parameters.AddWithValue("$url", plan.MusicBeePlaylistUrl);
+                    command.Parameters.AddWithValue("$name", plan.PhoneBackingName);
+                    command.Parameters.AddWithValue("$payload", payload);
+                    command.ExecuteNonQuery();
+                    transaction.Commit();
+                }
+            }
+        }
+
+        public bool ConfirmExport(
+            string musicBeeUrl, string backingName, string currentPlaylistId,
+            PlaylistState musicBee, PlaylistState observedPhone)
+        {
+            new DatabaseMigrator(databasePath).ApplyPending();
+            string? payload;
+            using (var connection = new SqliteConnection(connectionString))
+            {
+                connection.Open();
+                using (SqliteCommand command = connection.CreateCommand())
+                {
+                    command.CommandText = @"
+SELECT payload FROM pending_playlist_exports
+WHERE musicbee_url = $url AND phone_backing_name = $name COLLATE NOCASE;";
+                    command.Parameters.AddWithValue("$url", musicBeeUrl);
+                    command.Parameters.AddWithValue("$name", backingName);
+                    payload = command.ExecuteScalar() as string;
+                }
+            }
+            if (payload == null)
+            {
+                return false;
+            }
+            PendingPlaylistExport pending;
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(payload)))
+            {
+                pending = (PendingPlaylistExport)new DataContractJsonSerializer(
+                    typeof(PendingPlaylistExport)).ReadObject(stream)!;
+            }
+            if (!musicBee.Exists || !observedPhone.Exists
+                || musicBee.Checksum != pending.MusicBeeChecksum
+                || observedPhone.Checksum != pending.PhoneChecksum)
+            {
+                return false;
+            }
+            AcceptBaseline(pending.ToPlan(currentPlaylistId), musicBee, observedPhone);
+            return true;
         }
 
         public void Failed(SynchronizationPlan plan, string details)

@@ -110,6 +110,17 @@ CREATE TABLE accepted_sync_baseline_entries (
     phone_path TEXT NOT NULL,
     PRIMARY KEY(playlist_id, position)
 );
+"),
+            new Migration(
+                4,
+                "exports awaiting manual phone transfer",
+                @"
+CREATE TABLE pending_playlist_exports (
+    musicbee_url TEXT NOT NULL,
+    phone_backing_name TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    PRIMARY KEY(musicbee_url, phone_backing_name)
+);
 ")
         };
 

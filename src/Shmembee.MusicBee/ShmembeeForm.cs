@@ -1189,7 +1189,7 @@ namespace MusicBeePlugin
                 result =>
                 {
                     playlistRows = result;
-                    UpdateDraftFreshness();
+                    UpdateDraftFreshness(requireConfirmation: true);
                     RenderPlaylistRows();
                     LoadHistory();
                     RefreshCompleted?.Invoke(this, EventArgs.Empty);
@@ -1227,16 +1227,19 @@ namespace MusicBeePlugin
                     ? value
                     : null;
                 int index = playlistGrid.Rows.Add(
-                    draft?.Action == PlaylistLandingAction.TakeMusicBee && !draft.IsStale,
+                    draft?.Action == PlaylistLandingAction.TakeMusicBee && draft.IsConfirmed && !draft.IsStale,
                     row.MusicBeeName ?? "(blank — delete from phone)",
                     draft?.IsStale == true
                         ? "REVIEW STALE"
+                        : draft != null && draft.Action != PlaylistLandingAction.None && !draft.IsConfirmed
+                        ? "REVIEW AGAIN AFTER REFRESH"
                         : draft?.Action == PlaylistLandingAction.Custom
                         ? "CUSTOM"
                         : row.StatusText,
                     row.PhoneName ?? "(blank — delete from MusicBee)",
-                    draft?.Action == PlaylistLandingAction.TakePhone && !draft.IsStale);
+                    draft?.Action == PlaylistLandingAction.TakePhone && draft.IsConfirmed && !draft.IsStale);
                 playlistGrid.Rows[index].Tag = row;
+                playlistGrid.Rows[index].ReadOnly = row.Diff == null;
             }
 
             DataGridViewRow? restoredSelection = playlistGrid.Rows
@@ -1302,8 +1305,12 @@ namespace MusicBeePlugin
 
         private void SetLandingAction(HarnessPlaylistRow row, PlaylistLandingAction action)
         {
+            if (row.Diff == null)
+            {
+                return;
+            }
             PlaylistReviewDraft draft = GetOrCreateDraft(row);
-            draft.Action = draft.Action == action ? PlaylistLandingAction.None : action;
+            draft.Action = draft.Action == action && draft.IsConfirmed ? PlaylistLandingAction.None : action;
             draft.IsConfirmed = draft.Action != PlaylistLandingAction.Custom;
             draft.IsDeletion = draft.Action != PlaylistLandingAction.None
                 && !row.IsPaired
@@ -1367,13 +1374,17 @@ namespace MusicBeePlugin
             }
         }
 
-        private void UpdateDraftFreshness()
+        private void UpdateDraftFreshness(bool requireConfirmation = false)
         {
             foreach (PlaylistReviewDraft draft in reviewDrafts.Values)
             {
+                if (requireConfirmation)
+                {
+                    draft.IsConfirmed = false;
+                }
                 HarnessPlaylistRow? row = playlistRows.FirstOrDefault(item =>
                     string.Equals(item.RowId, draft.RowId, StringComparison.Ordinal));
-                draft.IsStale = row == null
+                draft.IsStale = row == null || row.Diff == null
                     || !string.Equals(
                         draft.MusicBeeChecksum,
                         row.MusicBeeChecksum,
@@ -1685,8 +1696,9 @@ namespace MusicBeePlugin
                     + (deletes == 0
                         ? string.Empty
                         : "\r\n\r\n" + deletes + " playlist deletion(s) are included.")
-                    + "\r\n\r\nBefore any phone change, Shmembee creates one verified "
-                    + "backup of every phone M3U playlist. "
+                    + "\r\n\r\nShmembee will back up and update MusicBee playlists on this PC "
+                    + "and generate mobile M3Us from the loaded snapshot. "
+                    + "Copy them to the phone manually; no device access is needed. "
                     + "If a later item fails, earlier successful changes remain applied.",
                 "Apply all reviewed changes",
                 MessageBoxButtons.OKCancel,
@@ -1697,17 +1709,17 @@ namespace MusicBeePlugin
             }
 
             const string applyActivity = "Applying reviewed playlist changes…";
-            var progress = new Progress<int>(percentage =>
+            var progress = new Progress<HarnessOperationProgress>(update =>
             {
                 if (!IsDisposed)
                 {
-                    activityLabel.Text = applyActivity + " " + percentage + "%";
+                    activityLabel.Text = update.Percentage + "% — " + update.Status;
                 }
             });
             await RunOperationAsync(
                 applyActivity + " 0%",
                 token => Task.Run(
-                    () => controller.ApplyAll(selected, token, progress),
+                    () => controller.ApplyAll(selected, token, stageProgress: progress),
                     CancellationToken.None),
                 result =>
                 {
@@ -1733,8 +1745,11 @@ namespace MusicBeePlugin
                     }
 
                     SaveReviewDrafts();
+                    playlistRows = controller.LoadedRows;
+                    UpdateDraftFreshness();
+                    RenderPlaylistRows();
+                    LoadHistory();
                     ApplyCompleted?.Invoke(this, EventArgs.Empty);
-                    BeginInvoke(new Action(async () => await RefreshAsync()));
                 },
                 completeWhenCancelled: true);
         }
@@ -1818,7 +1833,7 @@ namespace MusicBeePlugin
                 ignored =>
                 {
                     AddHistory("Baseline accepted");
-                    BeginInvoke(new Action(async () => await RefreshAsync()));
+                    LoadHistory();
                 });
         }
 
@@ -1833,9 +1848,9 @@ namespace MusicBeePlugin
             DialogResult answer = MessageBox.Show(
                 this,
                 "Apply the reviewed " + DescribeOutcome(current.Reconciliation.Outcome)
-                    + " proposal to both playlists?\r\n\r\n"
-                    + "Before the first phone write, Shmembee will create a verified backup "
-                    + "of every phone M3U playlist, then write and verify both destinations.",
+                    + " proposal to MusicBee and local mobile M3Us?\r\n\r\n"
+                    + "MusicBee playlists will be backed up on this PC. "
+                    + "The phone is read-only; copy the generated M3Us manually.",
                 "Apply synchronization",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Warning);
@@ -1861,7 +1876,7 @@ namespace MusicBeePlugin
                         result.Status == SynchronizationApplyStatus.Succeeded
                             ? MessageBoxIcon.Information
                             : MessageBoxIcon.Warning);
-                    BeginInvoke(new Action(async () => await RefreshAsync()));
+                    LoadHistory();
                 });
         }
 
@@ -2109,149 +2124,4 @@ namespace MusicBeePlugin
         }
     }
 
-    internal enum PlaylistLandingAction
-    {
-        None,
-        TakeMusicBee,
-        TakePhone,
-        Custom
-    }
-
-    internal sealed class PlaylistReviewDraft
-    {
-        private PlaylistReviewDraft(HarnessPlaylistRow row)
-        {
-            RowId = row.RowId;
-            MusicBeeChecksum = row.MusicBeeChecksum;
-            PhoneChecksum = row.PhoneChecksum;
-            MusicBeeOccurrenceKeys = new HashSet<string>(
-                row.Diff?.Occurrences
-                    .Where(item => item.DefaultChoice == OccurrenceChoice.MusicBee)
-                    .Select(item => item.Key)
-                ?? Enumerable.Empty<string>(),
-                StringComparer.Ordinal);
-            PhoneOccurrenceKeys = new HashSet<string>(
-                row.Diff?.Occurrences
-                    .Where(item => item.DefaultChoice == OccurrenceChoice.Phone)
-                    .Select(item => item.Key)
-                ?? Enumerable.Empty<string>(),
-                StringComparer.Ordinal);
-        }
-
-        private PlaylistReviewDraft(PersistedPlaylistReviewDraft persisted)
-        {
-            RowId = persisted.RowId;
-            MusicBeeChecksum = persisted.MusicBeeChecksum;
-            PhoneChecksum = persisted.PhoneChecksum;
-            MusicBeeOccurrenceKeys = new HashSet<string>(
-                persisted.IncludedOccurrenceKeys,
-                StringComparer.Ordinal);
-            PhoneOccurrenceKeys = new HashSet<string>(
-                persisted.PhoneOccurrenceKeys ?? Enumerable.Empty<string>(),
-                StringComparer.Ordinal);
-            Action = Enum.TryParse(
-                persisted.Action,
-                ignoreCase: false,
-                out PlaylistLandingAction action)
-                ? action
-                : PlaylistLandingAction.None;
-            IsConfirmed = persisted.IsConfirmed;
-            OrderSide = Enum.TryParse(
-                persisted.OrderSide,
-                ignoreCase: false,
-                out PlaylistSide orderSide)
-                && (Action != PlaylistLandingAction.Custom || IsConfirmed)
-                ? orderSide
-                : (PlaylistSide?)null;
-            IsDeletion = persisted.IsDeletion;
-        }
-
-        public string RowId { get; }
-
-        public string MusicBeeChecksum { get; }
-
-        public string PhoneChecksum { get; }
-
-        public PlaylistLandingAction Action { get; set; }
-
-        public HashSet<string> MusicBeeOccurrenceKeys { get; }
-
-        public HashSet<string> PhoneOccurrenceKeys { get; }
-
-        public OccurrenceChoice ChoiceFor(PlaylistOccurrence occurrence)
-        {
-            if (MusicBeeOccurrenceKeys.Contains(occurrence.Key))
-            {
-                return OccurrenceChoice.MusicBee;
-            }
-
-            if (PhoneOccurrenceKeys.Contains(occurrence.Key))
-            {
-                return OccurrenceChoice.Phone;
-            }
-
-            return OccurrenceChoice.Exclude;
-        }
-
-        public void SetChoice(string occurrenceKey, OccurrenceChoice choice)
-        {
-            MusicBeeOccurrenceKeys.Remove(occurrenceKey);
-            PhoneOccurrenceKeys.Remove(occurrenceKey);
-            if (choice == OccurrenceChoice.MusicBee)
-            {
-                MusicBeeOccurrenceKeys.Add(occurrenceKey);
-            }
-            else if (choice == OccurrenceChoice.Phone)
-            {
-                PhoneOccurrenceKeys.Add(occurrenceKey);
-            }
-        }
-
-        public IEnumerable<PlaylistOccurrenceDecision> DecisionsFor(
-            IEnumerable<PlaylistOccurrence> occurrences) =>
-            occurrences.Select(item => new PlaylistOccurrenceDecision(
-                item.Key,
-                ChoiceFor(item)));
-
-        public PlaylistSide? OrderSide { get; set; }
-
-        public bool IsConfirmed { get; set; }
-
-        public bool IsStale { get; set; }
-
-        public bool IsDeletion { get; set; }
-
-        public static PlaylistReviewDraft Create(HarnessPlaylistRow row) =>
-            new PlaylistReviewDraft(row);
-
-        public static PlaylistReviewDraft? FromPersisted(
-            PersistedPlaylistReviewDraft persisted)
-        {
-            if (persisted == null
-                || string.IsNullOrWhiteSpace(persisted.RowId)
-                || string.IsNullOrWhiteSpace(persisted.MusicBeeChecksum)
-                || string.IsNullOrWhiteSpace(persisted.PhoneChecksum))
-            {
-                return null;
-            }
-
-            return new PlaylistReviewDraft(persisted);
-        }
-
-        public PersistedPlaylistReviewDraft ToPersisted() =>
-            new PersistedPlaylistReviewDraft
-            {
-                RowId = RowId,
-                MusicBeePlaylistId = RowId,
-                PhonePlaylistId = RowId,
-                MusicBeeChecksum = MusicBeeChecksum,
-                PhoneChecksum = PhoneChecksum,
-                Action = Action.ToString(),
-                IncludedOccurrenceKeys = MusicBeeOccurrenceKeys.ToList(),
-                PhoneOccurrenceKeys = PhoneOccurrenceKeys.ToList(),
-                OrderSide = OrderSide?.ToString() ?? string.Empty,
-                IsConfirmed = IsConfirmed,
-                IsDeletion = IsDeletion
-            };
-    }
 }
