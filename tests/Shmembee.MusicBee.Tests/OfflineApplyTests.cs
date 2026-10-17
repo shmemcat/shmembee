@@ -21,6 +21,42 @@ public sealed class OfflineApplyTests : IDisposable
     private int writes;
     private string? failPlaylist;
     private Action? afterWrite;
+    private bool duplicateTitles;
+
+    [Fact]
+    public void ReplacementFromDifferentAlbumAndTrackNumberReconcilesAsOneOccurrence()
+    {
+        PlaylistSyncController controller = Controller("Road");
+        const string oldPath = "Music/Artist/Old Album/99 - Artist - First.mp3";
+        phone.Files.Clear();
+        phone.Files.Add(new PhonePlaylistContent("Road", "Road.m3u", Encoding.UTF8.GetBytes(oldPath + "\n")));
+
+        var row = Assert.Single(controller.RefreshPlaylistRows());
+        var occurrence = Assert.Single(row.Diff!.Occurrences);
+        Assert.Equal(OccurrenceMembership.Both, occurrence.Membership);
+        Assert.Equal(First, occurrence.PhoneEntry!.MusicBeeValue);
+        Assert.False(occurrence.PhoneEntry.MusicBeeValueUnavailable);
+        Assert.Equal(0, writes);
+    }
+
+    [Fact]
+    public void AmbiguousReplacementRemainsUnavailableWithCandidatesForReview()
+    {
+        duplicateTitles = true;
+        PlaylistSyncController controller = Controller("Road");
+        phone.Files.Clear();
+        phone.Files.Add(new PhonePlaylistContent("Road", "Road.m3u",
+            Encoding.UTF8.GetBytes("Music/Artist/Old Album/99 - Artist - First.mp3\n")));
+
+        var row = Assert.Single(controller.RefreshPlaylistRows());
+        var occurrence = Assert.Single(row.Diff!.Occurrences, item => item.Membership == OccurrenceMembership.PhoneOnly);
+        Assert.True(occurrence.PhoneEntry!.MusicBeeValueUnavailable);
+        Assert.Contains("Ambiguous", occurrence.PhoneEntry.UnavailableReason);
+        Assert.Contains("review", occurrence.PhoneEntry.UnavailableReason);
+        Assert.Contains(First, occurrence.PhoneEntry.UnavailableReason);
+        Assert.Contains(Second, occurrence.PhoneEntry.UnavailableReason);
+        Assert.Equal(0, writes);
+    }
 
     [Fact]
     public void MusicBeeOnlyPlaylistExportsOfflineWithOrderAndDuplicatesPreserved()
@@ -225,7 +261,7 @@ public sealed class OfflineApplyTests : IDisposable
             {
                 Plugin.MetaDataType.Artist or Plugin.MetaDataType.AlbumArtist => "Artist",
                 Plugin.MetaDataType.Album => "Album",
-                Plugin.MetaDataType.TrackTitle => url == First ? "First" : "Second",
+                Plugin.MetaDataType.TrackTitle => url == First || duplicateTitles ? "First" : "Second",
                 Plugin.MetaDataType.TrackNo => url == First ? "1" : "2",
                 _ => string.Empty
             }

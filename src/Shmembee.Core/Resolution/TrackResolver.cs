@@ -3,13 +3,62 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Shmembee.Core.Paths;
 
 namespace Shmembee.Core.Resolution
 {
     public sealed class TrackResolver
     {
+        private static readonly Regex FeaturedTitleSuffix = new Regex(
+            @"\s*(?:[\(\[]\s*)?\b(?:feat\.?|ft\.?|featuring)\s+(?<guests>[^()\[\]]+)[)\]]?\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        private static readonly Regex ArtistSeparator = new Regex(
+            @"\s*(?:[,;&]|\b(?:feat\.?|ft\.?|featuring)\s+)\s*",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private readonly bool requireUniqueMatches;
+
+        internal static string ReplacementTitleKey(string title) =>
+            NormalizeMetadata(FeaturedTitleSuffix.Replace(title, string.Empty));
+
+        internal static string PrimaryArtistKey(string? artist) =>
+            string.IsNullOrWhiteSpace(artist)
+                ? string.Empty
+                : NormalizeMetadata(ArtistSeparator.Split(artist!.Trim())[0]);
+
+        private static string CreditedArtistKey(string? artist, string? title)
+        {
+            if (string.IsNullOrWhiteSpace(artist) || string.IsNullOrWhiteSpace(title))
+            {
+                return string.Empty;
+            }
+
+            Match featured = FeaturedTitleSuffix.Match(title!);
+            return featured.Success
+                ? NormalizeMetadata(artist! + featured.Groups["guests"].Value)
+                : string.Empty;
+        }
+
+        internal static bool ReplacementArtistMatches(
+            LibraryTrack track,
+            TrackReference reference)
+        {
+            string artist = PrimaryArtistKey(reference.Artist);
+            string albumArtist = PrimaryArtistKey(reference.AlbumArtist);
+            string libraryArtist = PrimaryArtistKey(track.Artist);
+            string libraryAlbumArtist = PrimaryArtistKey(track.AlbumArtist);
+            return (artist.Length > 0 && libraryArtist.Length > 0
+                    && artist == libraryArtist)
+                || (libraryArtist.Length > 0
+                    && CreditedArtistKey(reference.Artist, reference.Title)
+                        == NormalizeMetadata(track.Artist!))
+                || (artist.Length > 0
+                    && CreditedArtistKey(track.Artist, track.Title)
+                        == NormalizeMetadata(reference.Artist!))
+                || (albumArtist.Length > 0 && libraryAlbumArtist.Length > 0
+                    && albumArtist == libraryAlbumArtist
+                    && albumArtist != NormalizeMetadata("Various Artists"));
+        }
 
         public TrackResolver(bool requireUniqueMatches = true)
         {
@@ -156,6 +205,7 @@ namespace Shmembee.Core.Resolution
         private readonly IReadOnlyDictionary<string, List<LibraryTrack>> fileNames;
         private readonly IReadOnlyDictionary<string, List<LibraryTrack>> artistTitles;
         private readonly IReadOnlyDictionary<string, List<LibraryTrack>> titles;
+        private readonly IReadOnlyDictionary<string, List<LibraryTrack>> replacementTitles;
 
         internal TrackResolverIndex(
             IEnumerable<LibraryTrack> library,
@@ -177,6 +227,8 @@ namespace Shmembee.Core.Resolution
             artistTitles = new Dictionary<string, List<LibraryTrack>>(
                 StringComparer.Ordinal);
             titles = new Dictionary<string, List<LibraryTrack>>(
+                StringComparer.Ordinal);
+            replacementTitles = new Dictionary<string, List<LibraryTrack>>(
                 StringComparer.Ordinal);
 
             foreach (LibraryTrack track in library)
@@ -208,6 +260,7 @@ namespace Shmembee.Core.Resolution
                     }
 
                     Add(titles, title, track);
+                    Add(replacementTitles, TrackResolver.ReplacementTitleKey(track.Title!), track);
                     foreach (string alternateTitle in
                         TrackResolver.EnumerateAlternateTitleKeys(track))
                     {
@@ -217,6 +270,7 @@ namespace Shmembee.Core.Resolution
                             StringComparison.Ordinal))
                         {
                             Add(titles, alternateTitle, track);
+                            Add(replacementTitles, TrackResolver.ReplacementTitleKey(alternateTitle), track);
                         }
                     }
 
@@ -493,6 +547,29 @@ namespace Shmembee.Core.Resolution
                 }
             }
 
+            if (!string.IsNullOrWhiteSpace(reference.Title))
+            {
+                string replacementTitle = TrackResolver.ReplacementTitleKey(reference.Title!);
+                if (replacementTitle.Length > 0)
+                {
+                    // Album and numbering describe a release, not the recording.
+                    // Never use playlist preference to hide multiple possible versions.
+                    List<LibraryTrack> replacements = Lookup(replacementTitles, replacementTitle)
+                        .Where(track => TrackResolver.ReplacementArtistMatches(track, reference)
+                            && TrackResolver.DurationMatches(track.DurationSeconds, reference.DurationSeconds))
+                        .ToList();
+                    result = TrackResolver.FromCandidates(
+                        replacements,
+                        MatchConfidence.ReplacementMetadata,
+                        "Replacement artist/title match across releases; multiple versions require review",
+                        requireUniqueMatches: true);
+                    if (result != null)
+                    {
+                        return result;
+                    }
+                }
+            }
+
             return ResolutionResult.Unmatched("No confident library match");
         }
 
@@ -713,6 +790,7 @@ namespace Shmembee.Core.Resolution
         UniquePathSuffix = 70,
         UniqueFileName = 60,
         StrongMetadata = 50,
-        PhoneTemplateMetadata = 40
+        PhoneTemplateMetadata = 40,
+        ReplacementMetadata = 30
     }
 }

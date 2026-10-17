@@ -275,7 +275,7 @@ public sealed class Phase2Tests
     }
 
     [Fact]
-    public void ResolverRejectsExplicitTrackNumberMismatch()
+    public void ResolverAllowsUniqueReplacementWithDifferentTrackNumber()
     {
         ResolutionResult result = new TrackResolver().Resolve(
             new TrackReference(
@@ -287,7 +287,7 @@ public sealed class Phase2Tests
             new[]
             {
                 new LibraryTrack(
-                    "wrong-track",
+                    "replacement",
                     @"D:\Music\Artist\Album\03 - Song.mp3",
                     artist: "Artist",
                     title: "Song",
@@ -295,7 +295,9 @@ public sealed class Phase2Tests
                     trackNumber: 3)
             });
 
-        Assert.Equal(ResolutionStatus.Unmatched, result.Status);
+        Assert.Equal(ResolutionStatus.Matched, result.Status);
+        Assert.Equal("replacement", result.Match!.Id);
+        Assert.Equal(MatchConfidence.ReplacementMetadata, result.Confidence);
     }
 
     [Theory]
