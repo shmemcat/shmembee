@@ -22,6 +22,68 @@ public sealed class OfflineApplyTests : IDisposable
     private string? failPlaylist;
     private Action? afterWrite;
     private bool duplicateTitles;
+    private string? firstTitle;
+
+    [Fact]
+    public void ManualMatchOverridesVersionDifferenceAndSurvivesRestartWithoutTagWrites()
+    {
+        firstTitle = "First (Live)";
+        const string oldPath = "Music/Artist/Old Album/99 - Artist - First.mp3";
+        PlaylistSyncController controller = Controller("Road");
+        phone.Files.Clear();
+        phone.Files.Add(new PhonePlaylistContent("Road", "Road.m3u", Encoding.UTF8.GetBytes(oldPath + "\n")));
+        var row = Assert.Single(controller.RefreshPlaylistRows());
+        var musicBee = Assert.Single(row.Diff!.Occurrences, item => item.Membership == OccurrenceMembership.MusicBeeOnly);
+        var unmatchedPhone = Assert.Single(row.Diff.Occurrences, item => item.Membership == OccurrenceMembership.PhoneOnly);
+
+        controller.MatchTracksManually(row.RowId, musicBee.Key, unmatchedPhone.Key);
+        int mediaReads = phone.MediaReads;
+        int playlistReads = phone.PlaylistReads;
+        phone.Disconnected = true;
+        var updated = Assert.Single(controller.RefreshPlaylistRows(reloadPhoneSnapshot: false));
+        var matched = Assert.Single(updated.Diff!.Occurrences);
+        Assert.Equal(OccurrenceMembership.Both, matched.Membership);
+        Assert.Equal(First, matched.PhoneEntry!.MusicBeeValue);
+        Assert.Equal(mediaReads, phone.MediaReads);
+        Assert.Equal(playlistReads, phone.PlaylistReads);
+
+        playlists.Clear();
+        phone.Files.Clear();
+        phone.Disconnected = false;
+        var restarted = Controller("Road");
+        phone.Files.Clear();
+        phone.Files.Add(new PhonePlaylistContent("Road", "Road.m3u", Encoding.UTF8.GetBytes(oldPath + "\n")));
+        var persisted = Assert.Single(Assert.Single(restarted.RefreshPlaylistRows()).Diff!.Occurrences);
+        Assert.Equal(OccurrenceMembership.Both, persisted.Membership);
+        Assert.Equal(First, persisted.PhoneEntry!.MusicBeeValue);
+        Assert.Equal("First (Live)", firstTitle);
+        Assert.Equal(0, writes);
+    }
+
+    [Fact]
+    public void ManualMatchTakesPrecedenceOverAutomaticMediaMapping()
+    {
+        PlaylistSyncController controller = Controller("Road");
+        var row = Assert.Single(controller.RefreshPlaylistRows());
+        var musicBee = Assert.Single(row.Diff!.Occurrences, item => item.Membership == OccurrenceMembership.MusicBeeOnly);
+        var phoneRow = Assert.Single(row.Diff.Occurrences, item => item.Membership == OccurrenceMembership.PhoneOnly);
+        controller.MatchTracksManually(row.RowId, musicBee.Key, phoneRow.Key);
+        var updated = Assert.Single(controller.RefreshPlaylistRows(reloadPhoneSnapshot: false));
+        var matched = Assert.Single(updated.Diff!.Occurrences);
+        Assert.Equal(OccurrenceMembership.Both, matched.Membership);
+        Assert.Equal(First, matched.PhoneEntry!.MusicBeeValue);
+        Assert.Equal(PhoneSecond, matched.PhoneEntry.SourceValue);
+    }
+
+    [Fact]
+    public void ManualMatchRejectsInvalidSelectionWithoutSaving()
+    {
+        PlaylistSyncController controller = Controller("Road");
+        var row = Assert.Single(controller.RefreshPlaylistRows());
+        string key = row.Diff!.Occurrences[0].Key;
+        Assert.Throws<InvalidOperationException>(() => controller.MatchTracksManually(row.RowId, key, key));
+        Assert.False(File.Exists(Path.Combine(root, "manual-track-matches.json")));
+    }
 
     [Fact]
     public void ReplacementFromDifferentAlbumAndTrackNumberReconcilesAsOneOccurrence()
@@ -261,7 +323,7 @@ public sealed class OfflineApplyTests : IDisposable
             {
                 Plugin.MetaDataType.Artist or Plugin.MetaDataType.AlbumArtist => "Artist",
                 Plugin.MetaDataType.Album => "Album",
-                Plugin.MetaDataType.TrackTitle => url == First || duplicateTitles ? "First" : "Second",
+                Plugin.MetaDataType.TrackTitle => url == First ? firstTitle ?? "First" : duplicateTitles ? "First" : "Second",
                 Plugin.MetaDataType.TrackNo => url == First ? "1" : "2",
                 _ => string.Empty
             }

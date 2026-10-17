@@ -57,6 +57,7 @@ namespace MusicBeePlugin
         private readonly DataGridView orderComparisonGrid = new DataGridView();
         private readonly TextBox playlistSearch = new TextBox();
         private readonly CheckBox showMatchingTracks = new CheckBox();
+        private readonly Button matchTracksButton = new Button();
         private readonly Button selectAllMusicBeeTracks = new Button();
         private readonly Button selectExistingMusicBeeTracks = new Button();
         private readonly Button selectAllPhoneTracks = new Button();
@@ -339,6 +340,18 @@ namespace MusicBeePlugin
             showMatchingTracks.CheckedChanged += (_, _) => RenderMembershipRows();
             top.Controls.Add(detailBackButton);
             top.Controls.Add(showMatchingTracks);
+            top.WrapContents = true;
+            matchTracksButton.Text = "Match selected rows";
+            matchTracksButton.AutoSize = true;
+            matchTracksButton.Enabled = false;
+            matchTracksButton.Click += async (_, _) => await MatchSelectedTracksAsync();
+            top.Controls.Add(matchTracksButton);
+            top.Controls.Add(new Label
+            {
+                Text = "Ctrl-click one MusicBee-only row and one phone-only row to match them.",
+                AutoSize = true,
+                Margin = new Padding(8, 8, 0, 0)
+            });
             var bulkChoices = BuildMembershipBulkChoices();
             ConfigureMembershipGrid();
             continueButton.Text = "Choose order (optional) →";
@@ -427,6 +440,8 @@ namespace MusicBeePlugin
             membershipGrid.AllowUserToDeleteRows = false;
             membershipGrid.RowHeadersVisible = false;
             membershipGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            membershipGrid.MultiSelect = true;
+            membershipGrid.SelectionChanged += (_, _) => UpdateManualMatchButton();
             membershipGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             membershipGrid.Columns.Add(new DataGridViewCheckBoxColumn
             { Name = "TakeMusicBee", HeaderText = "", FillWeight = 7 });
@@ -1476,6 +1491,66 @@ namespace MusicBeePlugin
             membershipGrid.CurrentCellDirtyStateChanged += MembershipGridDirtyStateChanged;
         }
 
+        private List<PlaylistOccurrence> SelectedMatchRows() => membershipGrid.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.Tag)
+            .OfType<PlaylistOccurrence>()
+            .ToList();
+
+        private void UpdateManualMatchButton()
+        {
+            List<PlaylistOccurrence> selected = SelectedMatchRows();
+            matchTracksButton.Enabled = !busy && selected.Count == 2
+                && selected.Count(row => row.Membership == OccurrenceMembership.MusicBeeOnly) == 1
+                && selected.Count(row => row.Membership == OccurrenceMembership.PhoneOnly) == 1;
+        }
+
+        private async Task MatchSelectedTracksAsync()
+        {
+            List<PlaylistOccurrence> selected = SelectedMatchRows();
+            if (busy || selectedPlaylistRow == null || selected.Count != 2)
+            {
+                return;
+            }
+            PlaylistOccurrence? musicBee = selected.SingleOrDefault(row => row.Membership == OccurrenceMembership.MusicBeeOnly);
+            PlaylistOccurrence? phone = selected.SingleOrDefault(row => row.Membership == OccurrenceMembership.PhoneOnly);
+            if (musicBee == null || phone == null)
+            {
+                return;
+            }
+            string rowId = selectedPlaylistRow.RowId;
+            IReadOnlyList<HarnessPlaylistRow> previousRows = playlistRows;
+            membershipGrid.EndEdit();
+            await RunOperationAsync(
+                "Saving manual track match",
+                token => Task.Run(() =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    controller.MatchTracksManually(rowId, musicBee.Key, phone.Key);
+                    return controller.RefreshPlaylistRows(reloadPhoneSnapshot: false);
+                }, token),
+                result =>
+                {
+                    foreach (HarnessPlaylistRow row in result)
+                    {
+                        HarnessPlaylistRow? previous = previousRows.FirstOrDefault(item => item.RowId == row.RowId);
+                        if (!(previous?.Diff?.Occurrences.Select(item => item.Key) ?? Enumerable.Empty<string>())
+                            .SequenceEqual(row.Diff?.Occurrences.Select(item => item.Key) ?? Enumerable.Empty<string>()))
+                        {
+                            reviewDrafts.Remove(row.RowId);
+                        }
+                    }
+                    playlistRows = result;
+                    UpdateDraftFreshness();
+                    SaveReviewDrafts();
+                    RenderPlaylistRows();
+                    selectedPlaylistRow = result.FirstOrDefault(row => row.RowId == rowId);
+                    showMatchingTracks.Checked = true;
+                    RenderMembershipRows();
+                    ShowWorkspacePage(membershipPage);
+                }, completeWhenCancelled: true);
+        }
+
         private static string DescribeOccurrenceChange(PlaylistOccurrenceChange change) =>
             change == PlaylistOccurrenceChange.AddedInMusicBee
                 ? "Added to the MusicBee playlist since the accepted baseline."
@@ -1988,6 +2063,7 @@ namespace MusicBeePlugin
             refreshButton.Enabled = !value;
             playlistGrid.Enabled = !value;
             membershipGrid.Enabled = !value;
+            UpdateManualMatchButton();
             continueButton.Enabled = !value;
             confirmDraftButton.Enabled = !value;
             cancelButton.Enabled = value;

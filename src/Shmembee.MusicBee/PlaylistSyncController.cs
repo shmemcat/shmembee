@@ -159,6 +159,8 @@ namespace MusicBeePlugin
         private readonly IProgressivePhoneMediaPathReader deviceMediaReader;
         private IReadOnlyList<HarnessPlaylistRow> loadedRows = Array.Empty<HarnessPlaylistRow>();
         private IReadOnlyList<LibraryTrack>? loadedLibrary;
+        private readonly ManualTrackMatchStore manualMatchStore;
+        private IReadOnlyDictionary<string, string> manualMatches;
         private string? phoneSnapshotBackupLocation;
         private Control? uiDispatcher;
 
@@ -169,6 +171,8 @@ namespace MusicBeePlugin
             IProgressivePhoneMediaPathReader? mediaReader = null)
         {
             libraryReader = new MusicBeeLibraryReader(api);
+            manualMatchStore = new ManualTrackMatchStore(Path.Combine(storagePath, "manual-track-matches.json"));
+            manualMatches = manualMatchStore.Load();
             directMusicBeeWriter = new MusicBeePlaylistWriter(api);
             musicBeeWriter = new DispatchedMusicBeePlaylistWriter(
                 directMusicBeeWriter,
@@ -231,6 +235,21 @@ namespace MusicBeePlugin
         }
 
         public IReadOnlyList<HarnessPlaylistRow> LoadedRows => loadedRows;
+
+        public void MatchTracksManually(string rowId, string musicBeeOccurrenceKey, string phoneOccurrenceKey)
+        {
+            HarnessPlaylistRow row = loadedRows.Single(item => item.RowId == rowId);
+            PlaylistOccurrence musicBee = row.Diff!.Occurrences.Single(item => item.Key == musicBeeOccurrenceKey);
+            PlaylistOccurrence phone = row.Diff.Occurrences.Single(item => item.Key == phoneOccurrenceKey);
+            if (musicBee.Membership != OccurrenceMembership.MusicBeeOnly
+                || phone.Membership != OccurrenceMembership.PhoneOnly)
+            {
+                throw new InvalidOperationException("Select one MusicBee-only row and one phone-only row.");
+            }
+            string url = musicBee.MusicBeeEntry!.MusicBeeValue ?? musicBee.MusicBeeEntry.SourceValue;
+            manualMatchStore.Save(phone.PhoneEntry!.SourceValue, url);
+            manualMatches = manualMatchStore.Load();
+        }
 
         public string ConfiguredPlaylistName => playlistName;
 
@@ -639,6 +658,10 @@ namespace MusicBeePlugin
 
             HashSet<string>? preferredUrlKeys =
                 TrackResolverIndex.CreatePreferredUrlKeys(preferredUrls);
+            foreach (KeyValuePair<string, string> match in manualMatches)
+            {
+                knownMappings[match.Key] = match.Value;
+            }
             IReadOnlyDictionary<string, string>? approvedMappings =
                 knownMappings.Count == 0 ? null : knownMappings;
             var baselineTombstones = new BaselineTombstoneMatcher(
@@ -869,7 +892,7 @@ namespace MusicBeePlugin
                     TrackPathNormalizer.NormalizePhonePath(path));
                 ResolutionResult result = resolver.Resolve(
                     CreatePhoneReference(path, settings.PhoneMediaFolder),
-                    approvedMappings: null,
+                    approvedMappings: manualMatches,
                     preferredUrlKeys);
                 if (result.Status != ResolutionStatus.Matched || result.Match == null)
                 {
@@ -930,12 +953,16 @@ namespace MusicBeePlugin
 
         public IReadOnlyList<HarnessPlaylistRow> RefreshPlaylistRows(
             IProgress<HarnessOperationProgress>? progress = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            bool reloadPhoneSnapshot = true)
         {
             loadedRows = Array.Empty<HarnessPlaylistRow>();
             loadedLibrary = null;
-            phoneSnapshotBackupLocation = null;
-            phoneReadSnapshot.Invalidate();
+            if (reloadPhoneSnapshot)
+            {
+                phoneSnapshotBackupLocation = null;
+                phoneReadSnapshot.Invalidate();
+            }
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(progress, 0, "Starting");
             IReadOnlyList<MusicPlaylist> playlists = InvokeOnMusicBeeThread(
@@ -964,9 +991,12 @@ namespace MusicBeePlugin
                         + " pending, "
                         + update.MediaFilesFound.ToString("N0")
                         + " files found"));
-            phoneReadSnapshot.Capture(
-                devicePlaylistReader, deviceMediaReader, cancellationToken, traversalProgress);
-            if (postSyncBackup != null)
+            if (reloadPhoneSnapshot)
+            {
+                phoneReadSnapshot.Capture(
+                    devicePlaylistReader, deviceMediaReader, cancellationToken, traversalProgress);
+            }
+            if (postSyncBackup != null && reloadPhoneSnapshot)
             {
                 ReportProgress(progress, 40, "Saving phone snapshot locally");
                 phoneSnapshotBackupLocation = postSyncBackup.Create();
@@ -1721,6 +1751,19 @@ namespace MusicBeePlugin
                         group => group.Key,
                         group => group.First().MusicBeeUrl,
                         StringComparer.OrdinalIgnoreCase);
+            var combinedMappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (approvedMappings != null)
+            {
+                foreach (KeyValuePair<string, string> match in approvedMappings)
+                {
+                    combinedMappings[match.Key] = match.Value;
+                }
+            }
+            foreach (KeyValuePair<string, string> match in manualMatches)
+            {
+                combinedMappings[match.Key] = match.Value;
+            }
+            approvedMappings = combinedMappings;
             var resolvedPhone = new List<ResolvedHarnessTrack>();
             foreach (string phonePath in phoneState.Entries)
             {

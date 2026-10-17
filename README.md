@@ -78,6 +78,12 @@ reads the phone playlists and media paths once. Reviews and Apply use that
 snapshot; the phone can be disconnected after loading. Refresh requires reviews
 to be confirmed again, including reviews restored from a previous session.
 
+To identify two separate rows as the same song, Ctrl-click one MusicBee-only
+row and one phone-only row, then choose **Match selected rows**. Shmembee saves
+the phone-path-to-MusicBee-track match for future comparisons across playlists
+and restarts, without changing tags or audio files. The comparison updates
+using the loaded phone snapshot; affected playlist selections need review again.
+
 - Phone access is read-only and confined to loading the snapshot. There is no
   automatic phone refresh after Apply.
 - Original phone playlist bytes are saved locally under
